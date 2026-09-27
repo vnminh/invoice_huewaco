@@ -26,6 +26,7 @@ from .db import (Alias, Base, Customer, HardNegative, KnowledgeReceipt, NumericF
 from .excel import ExcelTransaction, StreamingWorkbook
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
+from .platform_utils import portable_filename
 from .workspace import WorkingFiles
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -180,11 +181,19 @@ def create_app(engine=None, core=None, runtime_dir=None):
             else:
                 total, decisions = 0, {}
                 with StreamingWorkbook(path, check_cancel=check_cancel) as workbook:
-                    for batch in workbook.batches(sheet='BIDV', kind='auto', batch_size=batch_size):
+                    sheets = workbook.raw_sheets()
+                    skipped_sheets = workbook.skipped_sheets('raw')
+                    sheet_counts = {sheet: 0 for sheet in sheets}
+                    progress({'processed': 0, 'decisions': decisions, 'sheets': sheets,
+                              'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets})
+                    if not sheets:
+                        raise ValueError('No supported bank transaction sheets found')
+                    for batch in workbook.batches(kind='raw', batch_size=batch_size):
                         check_cancel()
                         for start in range(0, len(batch), 32):
                             check_cancel()
-                            core.prepare_batch([row.raw for row in batch[start:start + 32]])
+                            core.prepare_batch([row.raw for row in batch[start:start + 32]
+                                                if not row.validation_errors and row.debit == 0 and row.amount > 0])
                         results = []
                         with factory.begin() as session:
                             if engine.dialect.name == 'postgresql':
@@ -193,19 +202,29 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                 check_cancel()
                                 if row.customer_id:
                                     raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
-                                result = core.classify(session, row.raw, row.payer)
-                                if row.debit > 0 or row.amount <= 0:
-                                    result.update(decision='reject', score=0, customer_id=None, customer_name=None,
-                                        evidence={'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'})
+                                if row.validation_errors:
+                                    result = {'decision': 'manual_check', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                        'normalization': core.normalize(row.raw).dict(), 'alternatives': [],
+                                        'evidence': {'reason': 'Uncertain bank transaction fields', 'reason_vi': ' '.join(row.validation_errors)}}
+                                elif row.debit > 0 or row.amount <= 0:
+                                    result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                        'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
+                                else:
+                                    result = core.classify(session, row.raw, row.payer)
                                 results.append({**result, 'raw': row.raw, 'payer': row.payer, 'source': Path(path).name,
-                                                'row_index': row.row_index, 'date': row.date, 'amount': row.amount})
+                                    'sheet': row.sheet, 'reference': row.reference, 'debit': row.debit,
+                                    'validation_errors': row.validation_errors, 'row_index': row.row_index,
+                                    'date': row.date, 'amount': row.amount})
                         check_cancel()
                         working.append(job_id, results)
                         for result in results:
                             decisions[result['decision']] = decisions.get(result['decision'], 0) + 1
+                            sheet_counts[result['sheet']] += 1
                         total += len(results)
-                        progress({'processed': total, 'decisions': decisions})
-                summary = {'processed': total, 'decisions': decisions}
+                        progress({'processed': total, 'decisions': decisions, 'sheets': sheets,
+                                  'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets})
+                summary = {'processed': total, 'decisions': decisions, 'sheets': sheets,
+                           'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets}
             with job_lock:
                 working.update_job(job_id, status='completed', summary=summary, progress=total)
         except ImportCancelled as stopped:
@@ -252,8 +271,14 @@ def create_app(engine=None, core=None, runtime_dir=None):
         allowed = ('.xlsx', '.csv') if allow_csv else ('.xlsx',)
         if Path(filename).suffix.lower() not in allowed:
             raise HTTPException(422, 'Upload an XLSX or learning CSV file' if allow_csv else 'Upload an .xlsx workbook')
-        filename = filename[:180] if len(filename) <= 180 else filename[:170] + Path(filename).suffix
         folder = runtime / 'uploads' / str(uuid.uuid4())
+        filename_budget = 180
+        if os.name == 'nt':
+            # Leave room for the folder and filename without requiring Windows long-path setup.
+            filename_budget = min(filename_budget, 240 - len(str(folder).encode('utf-16-le')) // 2 - 1)
+            if filename_budget < 16:
+                raise HTTPException(422, 'Đường dẫn lưu tệp quá dài; hãy đặt project hoặc RUNTIME_DIR ở thư mục ngắn hơn')
+        filename = portable_filename(filename, max_bytes=filename_budget)
         folder.mkdir(parents=True)
         path = folder / filename
         try:
@@ -686,11 +711,12 @@ def create_app(engine=None, core=None, runtime_dir=None):
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         if learning:
-            writer.writerow(['IDKH', 'TENKH', 'NOIDUNG', 'NGAY', 'SOTIEN', 'NGANHANG', 'NOIDUNG_GOC_B64'])
+            writer.writerow(['IDKH', 'TENKH', 'NOIDUNG', 'NGAY', 'SOTIEN', 'NGANHANG', 'NOIDUNG_GOC_B64', 'SHEET', 'REFERENCE'])
         else:
             writer.writerow(['row_index', 'date', 'raw', 'amount', 'predicted_customer_id', 'customer_name', 'score',
                 'decision', 'status', 'confirmed_customer_id', 'confirmed_customer_name', 'learned', 'reason',
-                'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row'])
+                'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row',
+                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file'])
         yield buffer.getvalue()
         for row in records:
             buffer.seek(0); buffer.truncate(0)
@@ -699,7 +725,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     continue
                 writer.writerow([safe_csv(row['confirmed_customer_id']), safe_csv(row.get('confirmed_customer_name')),
                     safe_csv(row['raw']), row['date'], row['amount'], safe_csv(row.get('payer', 'BIDV')),
-                    base64.b64encode(row['raw'].encode('utf-8')).decode('ascii')])
+                    base64.b64encode(row['raw'].encode('utf-8')).decode('ascii'),
+                    safe_csv(row.get('sheet')), safe_csv(row.get('reference'))])
             else:
                 evidence = row.get('evidence', {})
                 source = evidence.get('pattern_source', {})
@@ -708,7 +735,9 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     safe_csv(row.get('confirmed_customer_id')), safe_csv(row.get('confirmed_customer_name')), row['learned'],
                     safe_csv(evidence.get('reason_vi') or evidence.get('reason')), evidence.get('matched_pattern_id'),
                     safe_csv(evidence.get('matched_pattern')), safe_csv(evidence.get('matched_template')),
-                    safe_csv(source.get('file')), source.get('row')])
+                    safe_csv(source.get('file')), source.get('row'), safe_csv(row.get('sheet')),
+                    safe_csv(row.get('payer')), safe_csv(row.get('reference')), row.get('debit', 0),
+                    safe_csv(' '.join(row.get('validation_errors', []))), safe_csv(row.get('source'))])
             yield buffer.getvalue()
 
     @api.get('/export/{job_id}')

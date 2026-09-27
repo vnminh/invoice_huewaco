@@ -16,10 +16,10 @@ Các con số đầu trang là số khách hàng và mẫu trong kho kiến th�
 
 ## 2. Đối soát một tệp
 
-1. Chọn Excel `.xlsx` ngân hàng chưa lọc, rồi bấm **Bắt đầu đối soát**. Hiện tại bộ đọc xử lý sheet **BIDV**.
+1. Chọn Excel `.xlsx` ngân hàng chưa lọc, rồi bấm **Bắt đầu đối soát**. Hệ thống quét tất cả sheet và đọc các sheet giao dịch nhận diện được, không giới hạn BIDV.
 2. Kết quả xuất hiện sau mỗi đợt đã xử lý. Có thể vào **Tác vụ xử lý** để theo dõi hoặc dừng.
 3. Tại **Tệp đang xem**, chọn đúng tệp cần làm việc. Kết quả của các tệp khác không bị trộn vào tệp đang chọn.
-4. Lọc theo đề xuất và trạng thái duyệt. Ô tìm kiếm nhận nội dung, mã hoặc tên khách hàng, không phân biệt hoa/thường và dấu tiếng Việt.
+4. Lọc theo đề xuất và trạng thái duyệt. Ô tìm kiếm nhận nội dung, mã/tên khách hàng, sheet, kênh và tham chiếu, không phân biệt hoa/thường và dấu tiếng Việt.
 5. Chọn **Kiểm tra** trên một dòng. Màn hình hiển thị nội dung hiện tại, mẫu trong lịch sử, nguồn mẫu và lý do so khớp. Mở phần đối chiếu số để xem giá trị, vai trò và thứ tự.
 
 | Đề xuất | Ý nghĩa |
@@ -30,6 +30,18 @@ Các con số đầu trang là số khách hàng và mẫu trong kho kiến th�
 | Không ghép | Không phải khoản ghi có phù hợp, hoặc có bằng chứng loại trừ. |
 
 **Điểm so khớp là điểm xếp hạng bằng chứng, không phải xác suất đã được hiệu chuẩn.**
+
+### Nhiều sheet và các bố cục ngân hàng
+
+Mỗi sheet được nhận diện theo tiêu đề cột: ngày, nội dung/mô tả/diễn giải, số tiền ghi có/ghi nợ hoặc số tiền có dấu, tham chiếu. Không áp dụng cột cố định của BIDV cho ngân hàng khác. Hàng tiêu đề được tìm trong 100 dòng đầu.
+
+Các bố cục có tiêu đề trong tệp mẫu gồm BIDV/chi nhánh, Vietcombank, Công thương, Quân đội, Nông nghiệp, Eximbank, SHB, Hàng Hải, ACB, VP Bank và Vikki. Tên sheet được giữ làm kênh mặc định; tệp học có cột ngân hàng/hình thức thì ưu tiên giá trị cột đó.
+
+Sheet Sacombank không có hàng tiêu đề trong tệp mẫu được đọc theo bố cục C/E/M/Q/T. Do chưa có tiêu đề xác nhận chiều ghi nợ/ghi có, các dòng được đưa về **0% / kiểm tra thủ công**; kiểm tra cột Q/T trong tệp gốc trước khi duyệt. Có thể bổ sung hàng tiêu đề chuẩn vào bản nhập để xác định chiều giao dịch.
+
+Sheet tổng hợp/hồ sơ khách hàng không có nội dung giao dịch và ngày/số tiền phù hợp không được tự chuyển thành giao dịch. Danh sách sheet chưa xử lý và lý do xuất hiện tại **Tác vụ xử lý**, cùng số dòng từng sheet. Không tìm thấy sheet phù hợp sẽ báo lỗi. Dữ liệu có số tiền/ngày không đọc được hoặc chưa rõ chiều ghi có/ghi nợ cần kiểm tra thủ công, không tự ghép.
+
+Hai sheet có cùng số dòng Excel vẫn là hai giao dịch riêng. Kết quả hiển thị tên sheet; CSV kết quả giữ `sheet`, `payer`, `reference`, `debit`, `validation_errors`, `input_file` bên cạnh các cột có sẵn. Cột nguồn mẫu lịch sử và tệp đầu vào là hai thông tin riêng.
 
 ### Xóa hiển thị và xóa tệp khác nhau
 
@@ -99,10 +111,14 @@ Nhập được lưu theo từng đợt. Dừng nhập sẽ giữ những đợt
 | NOIDUNG | Nội dung chuyển tiền đầy đủ. Bắt buộc. |
 | NGAY | Ngày giao dịch, nên dùng `YYYY-MM-DD` hoặc ngày ISO có giờ. |
 | SOTIEN | Số không âm, không có phân cách hàng nghìn; dấu chấm là phần thập phân. |
-| NGANHANG | Ngân hàng/kênh trả tiền; mặc định BIDV nếu trống. |
+| NGANHANG | Ngân hàng/kênh trả tiền; nếu trống dùng SHEET, hoặc BIDV để tương thích CSV cũ không có cả hai cột. |
 | NOIDUNG_GOC_B64 | Bản mã hóa nội dung gốc để bảo toàn nội dung khi xuất CSV. Không cần tự tạo. |
+| SHEET | Tên sheet nguồn; tùy chọn, được giữ khi xuất CSV đã học. |
+| REFERENCE | Tham chiếu giao dịch nguồn; tùy chọn. |
 
 Tệp dùng UTF-8; CSV tải từ hệ thống có BOM để Excel đọc tiếng Việt. Khi chỉnh CSV trong Excel, định dạng cột IDKH là **Text** để không mất số 0 đầu. Nếu sửa NOIDUNG, hệ thống dùng nội dung hiển thị mới; bản mã hóa chỉ dùng để khôi phục chính xác nội dung xuất chưa bị sửa.
+
+CSV không có worksheet; hệ thống đọc mọi dòng của mọi ngân hàng/kênh trong CSV, không lọc riêng BIDV. CSV kết quả và CSV đã học của một tác vụ bao gồm các sheet đã xử lý trong tệp đó.
 
 Nhập lại CSV có cùng nội dung/khách hàng/ngày/số tiền/kênh đã xác nhận không tăng thêm lần học. Khi nhập sang kho khác, các dòng được học vào kho đó.
 

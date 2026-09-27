@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from contextlib import closing
 import hashlib
 import os
 from pathlib import Path
@@ -34,7 +35,7 @@ class Embedder:
             if self.model.get_sentence_embedding_dimension() != DIMENSION:
                 raise ValueError('The PostgreSQL schema requires 384-dimensional embeddings')
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.cache_path, timeout=60) as cache:
+            with closing(sqlite3.connect(self.cache_path, timeout=60)) as cache, cache:
                 cache.execute('CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, vector BLOB NOT NULL)')
 
     def _key(self, value):
@@ -53,7 +54,7 @@ class Embedder:
         with self.lock:
             unique = {self._key(t): t for t in texts}
             pending = {}
-            with sqlite3.connect(self.cache_path, timeout=60) as cache:
+            with closing(sqlite3.connect(self.cache_path, timeout=60)) as cache, cache:
                 for key, value in unique.items():
                     if key in self.cache:
                         continue

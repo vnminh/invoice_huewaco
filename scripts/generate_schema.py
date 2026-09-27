@@ -25,6 +25,7 @@ header = f'''-- Standalone current schema: run this file alone for a new databas
 -- No init.sql or migration 001/002 is required before or after this file.
 -- Run inside a dedicated database as its owner / extension-capable administrator.
 -- From your Linux user shell: sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < {args.output}
+-- Windows PowerShell: psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "{args.output}"
 -- Requires PostgreSQL 15+ and pgvector installed on the PostgreSQL server.
 -- This script does not create users/databases, drop data, or start any services.
 -- Existing older schemas are not upgraded by CREATE TABLE IF NOT EXISTS.
