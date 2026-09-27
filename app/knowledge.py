@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import DataError, IntegrityError
 
 from .db import Customer, KnowledgeReceipt, Metadata, Pattern, sessions
 from .excel import ConfirmedCsv, StreamingWorkbook
 from .core import learning_receipt
+from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
 
 
 class ImportCancelled(Exception):
@@ -18,13 +20,15 @@ class ImportCancelled(Exception):
         self.summary = summary or {}
 
 
-def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=None, check_cancel=None):
+def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=None, check_cancel=None,
+                     row_errors=None):
     factory = sessions(engine)
     counts = Counter()
     payers = Counter()
     periods = set()
     embedding_chunk = 32 if check_cancel else batch_size
     check_cancel = check_cancel or (lambda: None)
+    row_errors = row_errors if row_errors is not None else RowErrors(file=Path(path).name)
     digest = hashlib.sha256()
     with Path(path).open('rb') as source:
         while chunk := source.read(1024 * 1024):
@@ -41,7 +45,9 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             if previous.get('status') == 'completed':
                 if previous.get('feature_extractor') != core.extractor.name or previous.get('embedding_model') != core.embedder.name:
                     raise ValueError('Imported file uses a different model; reimport confirmed history into a fresh database')
-                return {**previous, 'already_imported': True}
+                if not previous.get('counts', {}).get('errors', previous.get('row_error_count', 0)):
+                    return {**previous, 'already_imported': True}
+                # Retry errored files; receipts prevent relearning successful rows.
             record.value = json.dumps(summary)
         else:
             session.add(Metadata(key=key, value=json.dumps(summary)))
@@ -50,7 +56,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
         check_cancel()
         is_csv = Path(path).suffix.lower() == '.csv'
         reader = ConfirmedCsv if is_csv else StreamingWorkbook
-        with reader(path, check_cancel=check_cancel) as workbook:
+        with reader(path, check_cancel=check_cancel, row_errors=row_errors) as workbook:
             sheets = workbook.confirmed_sheets()
             skipped_sheets = [] if is_csv else workbook.skipped_sheets('confirmed')
             if not sheets:
@@ -58,53 +64,64 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             for sheet in sheets:
                 for batch in workbook.batches(sheet=sheet, batch_size=batch_size):
                     check_cancel()
-                    texts = [row.raw for row in batch if row.label_status == 'confirmed']
-                    # Bound time between stop checks while running the encoder.
-                    for start in range(0, len(texts), embedding_chunk):
-                        check_cancel()
-                        core.prepare_batch(texts[start:start + embedding_chunk])
+                    failed = prepare_rows(core, [row for row in batch if row.label_status == 'confirmed'],
+                                          row_errors, check_cancel, embedding_chunk)
                     batch_counts, batch_payers, batch_periods = Counter(), Counter(), set()
                     with factory.begin() as session:
                         if engine.dialect.name == 'postgresql':
                             session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+                        # Configuration failures affect every row; do not misreport them as bad input.
+                        core.check_model(session, writing=True)
                         for row in batch:
                             check_cancel()
                             batch_counts['processed'] += 1
                             if row.label_status != 'confirmed':
                                 batch_counts[row.label_status] += 1
                                 continue
-                            if not row.customer_id:
-                                raise ValueError('Knowledge import requires confirmed customer labels')
+                            if id(row) in failed:
+                                continue
                             if before and (not row.date or row.date[:10] >= before):
                                 raise ValueError('Training must precede all test transactions')
+                            try:
+                                with session.begin_nested():
+                                    if not row.customer_id:
+                                        raise ValueError('Dòng học thiếu mã khách hàng đã xác nhận.')
+                                    customer_id = core.ensure_customer(session, row.customer_id, row.customer_name).id if is_csv else row.customer_id
+                                    receipt = learning_receipt(row.raw, customer_id, row.date, row.amount, row.payer) if is_csv else None
+                                    learned = core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt)
+                                    # Surface all pending inserts while this row's savepoint is active.
+                                    session.flush()
+                            except (*ROW_DATA_ERRORS, DataError, IntegrityError) as error:
+                                row_errors.record(row.sheet, row.row_index, error, stage='learn')
+                                continue
                             batch_periods.add(row.date[:7])
                             batch_payers[row.payer] += 1
                             batch_counts['confirmed'] += 1
-                            customer_id = core.ensure_customer(session, row.customer_id, row.customer_name).id if is_csv else row.customer_id
-                            receipt = learning_receipt(row.raw, customer_id, row.date, row.amount, row.payer) if is_csv else None
-                            batch_counts['learned'] += int(core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt))
+                            batch_counts['learned'] += int(learned)
                         check_cancel()
                     counts.update(batch_counts)
                     sheet_counts[sheet] += batch_counts['processed']
                     payers.update(batch_payers)
                     periods.update(batch_periods)
                     if progress:
-                        progress({**dict(counts), 'sheet_counts': dict(sheet_counts), 'skipped_sheets': skipped_sheets})
+                        progress({**dict(counts), 'sheet_counts': dict(sheet_counts), 'skipped_sheets': skipped_sheets,
+                                  **row_errors.summary()})
         check_cancel()
     except ImportCancelled:
         summary.update(status='cancelled', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
                        periods=sorted(periods), payers=dict(payers),
                        feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
-                       counts=dict(counts))
+                       counts={**dict(counts), 'errors': row_errors.count}, **row_errors.summary())
         with factory.begin() as session:
-            session.get(Metadata, key).value = json.dumps(summary, ensure_ascii=False)
+            session.get(Metadata, key).value = json.dumps({k: v for k, v in summary.items() if k != 'row_errors'}, ensure_ascii=False)
         raise ImportCancelled(summary) from None
     summary.update(status='completed', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
                    periods=sorted(periods), payers=dict(payers),
                    feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
-                   counts=dict(counts))
+                   counts={**dict(counts), 'errors': row_errors.count}, **row_errors.summary())
     with factory.begin() as session:
-        session.get(Metadata, key).value = json.dumps(summary, ensure_ascii=False)
+        # Row indices/reasons are operational reports, stored in working files, not knowledge.
+        session.get(Metadata, key).value = json.dumps({k: v for k, v in summary.items() if k != 'row_errors'}, ensure_ascii=False)
     return summary
 
 

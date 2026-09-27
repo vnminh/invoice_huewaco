@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from .normalize import fold
+from .row_errors import ROW_DATA_ERRORS, RowErrors
 
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 REL = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
@@ -177,16 +178,20 @@ def headerless_layout(sheet, values):
 
 class ConfirmedCsv:
     """Portable confirmed examples, including CSV exported by the review screen."""
-    def __init__(self, path, check_cancel=None):
+    def __init__(self, path, check_cancel=None, row_errors=None):
         self.path = Path(path)
         self.check_cancel = check_cancel or (lambda: None)
+        self.row_errors = row_errors if row_errors is not None else RowErrors(file=self.path.name)
 
     def __enter__(self):
         self.source = self.path.open(encoding='utf-8-sig', newline='')
-        self.reader = csv.DictReader(self.source)
-        if not {'IDKH', 'NOIDUNG'}.issubset(self.reader.fieldnames or []):
+        try:
+            self.reader = csv.DictReader(self.source)
+            if not {'IDKH', 'NOIDUNG'}.issubset(self.reader.fieldnames or []):
+                raise ValueError('Learning CSV requires IDKH and NOIDUNG columns')
+        except BaseException:
             self.source.close()
-            raise ValueError('Learning CSV requires IDKH and NOIDUNG columns')
+            raise
         return self
 
     def __exit__(self, *_):
@@ -199,51 +204,54 @@ class ConfirmedCsv:
         batch = []
         for record in self.reader:
             self.check_cancel()
-            customer_id = (record.get('IDKH') or '').strip()
-            status = label_status(customer_id, record.get('TENKH'))
-            if status in ('skipped', 'unresolved'):
-                # Ignore these labels before parsing customer data or decoding content.
-                batch.append(ExcelTransaction(self.reader.line_num, '', customer_id=customer_id,
-                    source=self.path.name, label_status=status))
-                if len(batch) == batch_size:
-                    yield batch
-                    batch = []
-                continue
-            raw = record.get('NOIDUNG') or ''
-            if record.get('NOIDUNG_GOC_B64'):
-                try:
-                    original = base64.b64decode(record['NOIDUNG_GOC_B64'], validate=True).decode('utf-8')
-                except (binascii.Error, UnicodeDecodeError) as error:
-                    raise ValueError('Invalid original text in learning CSV') from error
-                protected = "'" + original if original.lstrip().startswith(('=', '+', '-', '@')) else original
-                # Preserve exported text exactly, but honor explicit edits to the visible column.
-                if raw in (original, protected):
-                    raw = original
-            if not raw.strip() or len(raw) > 32767:
-                raise ValueError('Learning CSV contains empty or excessively long content')
-            if not customer_id or len(customer_id) > 100:
-                raise ValueError('Learning CSV contains an invalid customer ID')
             try:
-                amount = float((record.get('SOTIEN') or '0').strip())
-                if not math.isfinite(amount) or amount < 0:
-                    raise ValueError()
-            except ValueError as error:
-                raise ValueError('Learning CSV contains invalid amounts') from error
-            batch.append(ExcelTransaction(self.reader.line_num, raw, date=date_text(record.get('NGAY')),
-                amount=amount, customer_id=customer_id, customer_name=record.get('TENKH') or '',
-                payer=record.get('NGANHANG') or record.get('SHEET') or 'BIDV', source=self.path.name,
-                reference=record.get('REFERENCE') or '', sheet=record.get('SHEET') or 'CSV', label_status=status))
+                transaction = self._transaction(record, self.reader.line_num)
+            except ROW_DATA_ERRORS as error:
+                self.row_errors.record(record.get('SHEET') or 'CSV', self.reader.line_num, error)
+                continue
+            batch.append(transaction)
             if len(batch) == batch_size:
                 yield batch
                 batch = []
         if batch:
             yield batch
 
+    def _transaction(self, record, row_index):
+        customer_id = (record.get('IDKH') or '').strip()
+        status = label_status(customer_id, record.get('TENKH'))
+        if status in ('skipped', 'unresolved'):
+            return ExcelTransaction(row_index, '', customer_id=customer_id,
+                source=self.path.name, sheet=record.get('SHEET') or 'CSV', label_status=status)
+        raw = record.get('NOIDUNG') or ''
+        if record.get('NOIDUNG_GOC_B64'):
+            try:
+                original = base64.b64decode(record['NOIDUNG_GOC_B64'], validate=True).decode('utf-8')
+            except (binascii.Error, UnicodeDecodeError) as error:
+                raise ValueError('Nội dung gốc mã hóa trong CSV chưa hợp lệ.') from error
+            protected = "'" + original if original.lstrip().startswith(('=', '+', '-', '@')) else original
+            if raw in (original, protected):
+                raw = original
+        if not raw.strip() or len(raw) > 32767:
+            raise ValueError('Nội dung giao dịch trống hoặc vượt quá 32.767 ký tự.')
+        if not customer_id or len(customer_id) > 100:
+            raise ValueError('Mã khách hàng trống hoặc vượt quá 100 ký tự.')
+        try:
+            amount = float((record.get('SOTIEN') or '0').strip())
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError()
+        except ValueError as error:
+            raise ValueError('Số tiền trong CSV chưa hợp lệ.') from error
+        return ExcelTransaction(row_index, raw, date=date_text(record.get('NGAY')),
+            amount=amount, customer_id=customer_id, customer_name=record.get('TENKH') or '',
+            payer=record.get('NGANHANG') or record.get('SHEET') or 'BIDV', source=self.path.name,
+            reference=record.get('REFERENCE') or '', sheet=record.get('SHEET') or 'CSV', label_status=status)
+
 
 class StreamingWorkbook:
-    def __init__(self, path: str | Path, check_cancel=None):
+    def __init__(self, path: str | Path, check_cancel=None, row_errors=None):
         self.path = Path(path)
         self.check_cancel = check_cancel or (lambda: None)
+        self.row_errors = row_errors if row_errors is not None else RowErrors(file=self.path.name)
 
     def __enter__(self):
         self.resources = ExitStack()
@@ -291,10 +299,10 @@ class StreamingWorkbook:
         # Close streams/connections before deleting files; Windows forbids deleting open files.
         self.resources.close()
 
-    def rows(self, sheet=None):
+    def rows(self, sheet=None, report_errors=True):
         if sheet is None:
             for name in self.sheets:
-                yield from self.rows(name)
+                yield from self.rows(name, report_errors=report_errors)
             return
         if sheet not in self.sheets:
             raise ValueError(f'Sheet {sheet!r} not found. Available: {", ".join(self.sheets)}')
@@ -302,39 +310,57 @@ class StreamingWorkbook:
         with self.resources.enter_context(self.zip.open(self.sheets[sheet])) as stream:
             events = ET.iterparse(stream, events=('start', 'end'))
             _, root = next(events)
+            row_position = 0
             for event, element in events:
                 if event != 'end' or element.tag != NS + 'row':
                     continue
                 self.check_cancel()
-                values = {}
-                for cell in element.findall(NS + 'c'):
-                    col = re.sub(r'\d', '', cell.attrib['r'])
-                    kind = cell.attrib.get('t')
-                    value = cell.find(NS + 'v')
-                    value = value.text if value is not None else None
-                    if kind == 's' and value is not None:
-                        record = self.db.execute('SELECT value FROM strings WHERE id=?', (int(value),)).fetchone()
-                        value = record[0] if record else ''
-                    elif kind == 'inlineStr':
-                        value = ''.join(t.text or '' for t in cell.iter(NS + 't'))
-                    elif value is not None and kind not in ('str', 'e'):
-                        try:
-                            # Do not round long numeric identifiers through a float,
-                            # or discard zeros present in the stored cell value.
-                            if not (value.isdigit() and (len(value) > 15 or (len(value) > 1 and value.startswith('0')))):
-                                value = float(value)
-                                if value.is_integer():
-                                    value = int(value)
-                        except ValueError:
-                            pass
-                    if value is not None:
-                        values[col] = value
-                yield int(element.attrib['r']), values
-                element.clear()
-                # Clear the sheetData parent, not only rows: otherwise empty row shells grow.
-                sheet_data = root.find(NS + 'sheetData')
-                if sheet_data is not None:
-                    sheet_data.clear()
+                row_position += 1
+                row_index = None
+                try:
+                    row_index = int(element.attrib['r'])
+                    if row_index < 1:
+                        row_index = None
+                        raise ValueError('Chỉ số dòng Excel chưa hợp lệ.')
+                    values = self._row_values(element)
+                except ROW_DATA_ERRORS as error:
+                    if report_errors:
+                        self.row_errors.record(sheet, row_index, error, row_position=row_position)
+                else:
+                    yield row_index, values
+                finally:
+                    element.clear()
+                    # Clear empty row shells to keep streaming memory bounded.
+                    sheet_data = root.find(NS + 'sheetData')
+                    if sheet_data is not None:
+                        sheet_data.clear()
+
+    def _row_values(self, element):
+        values = {}
+        for cell in element.findall(NS + 'c'):
+            col = re.sub(r'\d', '', cell.attrib['r'])
+            kind = cell.attrib.get('t')
+            value = cell.find(NS + 'v')
+            value = value.text if value is not None else None
+            if kind == 's' and value is not None:
+                record = self.db.execute('SELECT value FROM strings WHERE id=?', (int(value),)).fetchone()
+                if record is None:
+                    raise ValueError(f'Ô {cell.attrib["r"]} tham chiếu nội dung không tồn tại trong Excel.')
+                value = record[0]
+            elif kind == 'inlineStr':
+                value = ''.join(t.text or '' for t in cell.iter(NS + 't'))
+            elif value is not None and kind not in ('str', 'e'):
+                try:
+                    # Keep long numeric identifiers and leading zeros as exact strings.
+                    if not (value.isdigit() and (len(value) > 15 or (len(value) > 1 and value.startswith('0')))):
+                        value = float(value)
+                        if value.is_integer():
+                            value = int(value)
+                except ValueError:
+                    pass
+            if value is not None:
+                values[col] = value
+        return values
 
     def sheet_layouts(self):
         if hasattr(self, '_layouts'):
@@ -342,7 +368,8 @@ class StreamingWorkbook:
         layouts = {}
         for sheet in self.sheets:
             self.check_cancel()
-            source = self.rows(sheet)
+            # Header probing must not report the same bad row again during the real scan.
+            source = self.rows(sheet, report_errors=False)
             try:
                 for row_index, values in source:
                     layout = detect_layout(values)
@@ -390,63 +417,83 @@ class StreamingWorkbook:
             raise ValueError(f'Could not identify transaction headers in sheet {sheet!r}')
         if kind != 'auto' and layout['kind'] != kind:
             raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
-        columns = layout['columns']
-        source = f'{self.path.name} [{sheet}]'
         for row_index, values in self.rows(sheet):
             if row_index <= layout['header_row']:
                 continue
-            if detect_layout(values):
-                continue  # Repeated bilingual headers/page headings are not transactions.
-            get = lambda role: values.get(columns.get(role, ''), '')
-            raw = str(get('raw'))
-            if not raw.strip():
+            try:
+                transaction = self._transaction(sheet, row_index, values, layout)
+            except ROW_DATA_ERRORS as error:
+                self.row_errors.record(sheet, row_index, error)
                 continue
-            customer_id = str(get('customer_id')).strip()
-            if layout['kind'] == 'confirmed':
-                name = str(get('customer_name')).strip()
-                if not customer_id or customer_id.startswith('#'):
-                    continue
-                status = label_status(customer_id, name)
-                if status in ('skipped', 'unresolved'):
-                    yield ExcelTransaction(row_index, '', customer_id=customer_id, source=source,
-                                           sheet=sheet, label_status=status)
-                    continue
-                amount = parse_money(get('amount'))
-                if amount is None or amount < 0:
-                    raise ValueError(f'Invalid amount in sheet {sheet!r}, row {row_index}')
-                yield ExcelTransaction(row_index, raw, date=date_text(get('date')),
-                    amount=amount, customer_id=customer_id, customer_name=name or customer_id,
-                    payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, label_status=status)
-                continue
-            reference = str(get('reference')).strip()
-            # Totals/closing balances without a date are not transaction rows.
-            if not get('date') and not reference:
-                continue
-            errors = []
-            if layout.get('direction_unverified'):
-                errors.append('Sheet thiếu tiêu đề ghi nợ/ghi có; kiểm tra cột Q/T trong tệp gốc trước khi xác nhận.')
-            date = date_text(get('date'))
-            if not valid_date(date):
-                errors.append('Ngày giao dịch chưa hợp lệ; cần kiểm tra thủ công.')
-            if 'credit' in columns:
-                credit = parse_money(get('credit'))
-                debit = parse_money(get('debit'))
-                if credit is None or debit is None or credit < 0 or debit < 0:
-                    errors.append('Số tiền ghi có/ghi nợ chưa hợp lệ; cần kiểm tra thủ công.')
-                amount, debit = credit if credit is not None else 0, debit if debit is not None else 0
+            if transaction is not None:
+                yield transaction
+
+    def _transaction(self, sheet, row_index, values, layout):
+        if detect_layout(values):
+            return None  # Repeated page headers are not transactions.
+        columns = layout['columns']
+        source = f'{self.path.name} [{sheet}]'
+        get = lambda role: values.get(columns.get(role, ''), '')
+        raw = str(get('raw'))
+        if not raw.strip():
+            return None
+        customer_id = str(get('customer_id')).strip()
+        if layout['kind'] == 'confirmed':
+            name = str(get('customer_name')).strip()
+            if not customer_id:
+                return None
+            status = label_status(customer_id, name)
+            if status in ('skipped', 'unresolved'):
+                return ExcelTransaction(row_index, '', customer_id=customer_id, source=source,
+                                       sheet=sheet, label_status=status)
+            if customer_id.startswith('#') or len(customer_id) > 100:
+                raise ValueError('Mã khách hàng chưa hợp lệ hoặc vượt quá 100 ký tự.')
+            if len(raw) > 32767:
+                raise ValueError('Nội dung giao dịch vượt quá 32.767 ký tự.')
+            amount = parse_money(get('amount'))
+            if amount is None or amount < 0:
+                raise ValueError('Số tiền của dòng học chưa hợp lệ.')
+            return ExcelTransaction(row_index, raw, date=date_text(get('date')),
+                amount=amount, customer_id=customer_id, customer_name=name or customer_id,
+                payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, label_status=status)
+        reference = str(get('reference')).strip()
+        if not get('date') and not reference:
+            return None  # Totals/closing balances.
+        if len(raw) > 32767:
+            raise ValueError('Nội dung giao dịch vượt quá 32.767 ký tự.')
+        errors = []
+        if layout.get('direction_unverified'):
+            errors.append('Sheet thiếu tiêu đề ghi nợ/ghi có; kiểm tra cột Q/T trong tệp gốc trước khi xác nhận.')
+        date = date_text(get('date'))
+        # Printed page/contact footers can occupy the date/description columns.
+        # Ignore only recognizable footer text without any transaction evidence;
+        # malformed dates on actual payments must still go to manual review.
+        footer = re.match(r'^(?:telex|swift|website|contact center)\s*:', fold(raw).strip()) or \
+                 re.fullmatch(r'(?:trang|page)\s+\d+\s*/\s*\d+', fold(raw).strip())
+        has_money_cells = any(str(get(role)).strip() for role in ('credit', 'debit', 'amount'))
+        if footer and not reference and not has_money_cells and not valid_date(date):
+            return None
+        if not valid_date(date):
+            errors.append('Ngày giao dịch chưa hợp lệ; cần kiểm tra thủ công.')
+        if 'credit' in columns:
+            credit = parse_money(get('credit'))
+            debit = parse_money(get('debit'))
+            if credit is None or debit is None or credit < 0 or debit < 0:
+                errors.append('Số tiền ghi có/ghi nợ chưa hợp lệ; cần kiểm tra thủ công.')
+            amount, debit = credit if credit is not None else 0, debit if debit is not None else 0
+        else:
+            original = get('amount')
+            signed = parse_money(original)
+            if signed is None:
+                amount, debit = 0, 0
+                errors.append('Số tiền giao dịch chưa hợp lệ; cần kiểm tra thủ công.')
             else:
-                original = get('amount')
-                signed = parse_money(original)
-                if signed is None:
-                    amount, debit = 0, 0
-                    errors.append('Số tiền giao dịch chưa hợp lệ; cần kiểm tra thủ công.')
-                else:
-                    amount, debit = max(signed, 0), max(-signed, 0)
-                    token = str(original).strip().removeprefix("'").strip()
-                    if signed > 0 and not token.startswith('+'):
-                        errors.append('Chưa xác định được chiều ghi có/ghi nợ; cần kiểm tra thủ công.')
-            yield ExcelTransaction(row_index, raw, reference, date, amount, debit,
-                payer=sheet, source=source, sheet=sheet, validation_errors=errors)
+                amount, debit = max(signed, 0), max(-signed, 0)
+                token = str(original).strip().removeprefix("'").strip()
+                if signed > 0 and not token.startswith('+'):
+                    errors.append('Chưa xác định được chiều ghi có/ghi nợ; cần kiểm tra thủ công.')
+        return ExcelTransaction(row_index, raw, reference, date, amount, debit,
+            payer=sheet, source=source, sheet=sheet, validation_errors=errors)
 
     def batches(self, sheet=None, kind='auto', batch_size=1000):
         if not 1 <= batch_size <= 5000:
