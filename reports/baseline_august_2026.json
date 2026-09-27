@@ -1,0 +1,803 @@
+{
+  "created_at": "2026-09-26T04:54:15.333630+00:00",
+  "protocol": "Learn all usable July FN labels across all sheets and payer channels; test August BIDV only; knowledge frozen during evaluation",
+  "raw_file": "Ngan hang thang 08.2026.xlsx",
+  "ground_truth_file": "Ngan hang thang 8-2026 FN.xlsx",
+  "training_file": "Ngan hang thang 7-2026 FN.xlsx",
+  "training_sheets": [
+    "BIDV"
+  ],
+  "training_payers": {
+    "BIDV": 8048,
+    "VNPT": 543,
+    "VNPAY": 3445
+  },
+  "sheet": "BIDV",
+  "cutoff": null,
+  "batch_size": 1000,
+  "database": "isolated temporary SQLite harness; PostgreSQL query paths require separate integration verification",
+  "embedding_model": "hash",
+  "counts": {
+    "raw_rows": 8342,
+    "truth_rows": 11481,
+    "truth_unmatched_descriptions": 330,
+    "truth_unique_customers": 11193,
+    "truth_ko_skipped_rows": 127,
+    "truth_unresolved_rows": 8,
+    "training_source_rows": 12149,
+    "training_rows": 12036,
+    "training_unresolved_rows": 8,
+    "training_skipped_rows": 105,
+    "training_customers": 11753,
+    "heldout_rows": 8342,
+    "heldout_positive": 7452,
+    "unseen_customer_positives": 6014,
+    "manual_check": 6795,
+    "seen_customer_positives": 1438,
+    "auto_accept": 478,
+    "heldout_negative": 500,
+    "reject": 486,
+    "ko_rows_skipped": 127,
+    "review": 193,
+    "ambiguous_rows_excluded": 255,
+    "unresolved_rows_excluded": 8
+  },
+  "truth_payers": {
+    "*": 1,
+    "BIDV": 8296,
+    "VNPAY": 2750,
+    "VNPT": 434
+  },
+  "metrics": {
+    "classification": {
+      "precision": 0.9090909090909091,
+      "recall": 0.08185721953837896,
+      "f1": 0.150190816200911,
+      "true_positive": 610,
+      "false_positive": 61,
+      "false_negative": 6842
+    },
+    "auto_accept": {
+      "precision": 0.9916317991631799,
+      "recall": 0.06360708534621579,
+      "f1": 0.11954602774274906,
+      "true_positive": 474,
+      "false_positive": 4,
+      "false_negative": 6978
+    },
+    "seen_customers": {
+      "precision": 0.9457364341085271,
+      "recall": 0.4242002781641168,
+      "f1": 0.585693710993759,
+      "true_positive": 610,
+      "false_positive": 35,
+      "false_negative": 828
+    },
+    "filtering": {
+      "precision": 0.9880774962742176,
+      "recall": 0.0889694041867955,
+      "f1": 0.16324018219869507,
+      "true_positive": 663,
+      "false_positive": 8,
+      "false_negative": 6789
+    }
+  },
+  "duration_seconds": 402.632,
+  "process_peak_rss_mb": 98.34,
+  "examples": {
+    "false_positive": [
+      {
+        "row_index": 350,
+        "raw": "TKThe :102875649076, tai ICBVVNVX. HOANG TAI Chuyen tien-020097041508030847012026oUSh270099",
+        "truth_customer_id": "303122",
+        "predicted_customer_id": "235649",
+        "score": 0.6406,
+        "decision": "review",
+        "seen_customer": false,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 436,
+        "raw": "REM 9901CI260803000128162 B/O Ban Quan ly Du an Dau tu xay dung khu vuc Khu kinh te, cong nghiep F/O-5510000370 Cong ty co phan cap nuoc Hue DTLS-REF/202608031010011000683301701035 Thanh toan tien nuoc thang 7 Bank Charge .00 VAT .00",
+        "truth_customer_id": "031966",
+        "predicted_customer_id": "278687",
+        "score": 0.7551,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 461,
+        "raw": "REM 9901SP260803000137473 B/O KHO BAC NHA NUOC KV XIII-PHONG GIAO DICH SO 15 F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/4006HUB026655648 TRUONG TIEU HOC PHU DA 2CHUYEN TIEN NUOC THANG 07/2026 Bank Charge .00 VAT .00",
+        "truth_customer_id": "214252",
+        "predicted_customer_id": "038633",
+        "score": 0.7551,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence; competing customer requires human review"
+      },
+      {
+        "row_index": 678,
+        "raw": "REM 9901CI260804000118645 B/O Thi hanh an dan su thanh pho Hue F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608041010011000767801701035 Thanh toan tien nuoc thang 06/2026 (KV3) - DL Phong Thai Bank Charge .00 VAT .00",
+        "truth_customer_id": "315123",
+        "predicted_customer_id": "319049",
+        "score": 0.6028,
+        "decision": "review",
+        "seen_customer": false,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 685,
+        "raw": "REM 9901CI260804000121025 B/O Ban Quan ly Cang ca thanh pho Hue F/O-55110000000370 Cong ty co phan cap nuoc Hue DTLS-REF/202608041010011000920701701035 Chuyen tien nuoc T7/2026 CM Bank Charge .00 VAT .00",
+        "truth_customer_id": "306202",
+        "predicted_customer_id": "058464",
+        "score": 0.7527,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence; competing customer requires human review"
+      },
+      {
+        "row_index": 705,
+        "raw": "REM 9901CI260804000129234 B/O Ban Quan ly Du an Dau tu xay dung khu vuc Khu kinh te, cong nghiep F/O-5510000370 Cong ty co phan cap nuoc Hue DTLS-REF/202608041010011001167601701035 Thanh toan tien nuoc thang 7/2026 tai Cum CN An Hoa Bank Charge .00 VAT .00",
+        "truth_customer_id": "127013",
+        "predicted_customer_id": "278687",
+        "score": 0.7447,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 917,
+        "raw": "REM 9901CI260805000030893 B/O TRAM Y TE PHUONG AN CUU F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608051010011000514601203003 Thanh toan tien nuoc tu 27/5 den 31/7 nam 2026 co so 2KBNNTTSP_KBA260805253762.Tram Y te phuong An Cuu Bank Charge .00 VAT .00",
+        "truth_customer_id": "083882",
+        "predicted_customer_id": "175593",
+        "score": 0.7413,
+        "decision": "review",
+        "seen_customer": false,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 925,
+        "raw": "REM 9901SP260805000033508 B/O Truong Tieu hoc Phu An 1 F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/460A26806W42ATTA 2670110312451246Thanh toan tien nuoc thang 07/2026 Bank Charge .00 VAT .00",
+        "truth_customer_id": "058172",
+        "predicted_customer_id": "057225",
+        "score": 0.7551,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence; competing customer requires human review"
+      },
+      {
+        "row_index": 934,
+        "raw": "TKThe :1043938892, tai BFTVVNVX. CONG TY CO PHAN DIEN GIA LAI- CHI NHANH chuyen tien Thanh toan CP nuoc sinh hoat T07/2026 NM PD-020097043608051308202026SBob008909",
+        "truth_customer_id": "250888",
+        "predicted_customer_id": "018236",
+        "score": 0.679,
+        "decision": "review",
+        "seen_customer": false,
+        "reason": "Weighted historical evidence"
+      },
+      {
+        "row_index": 1114,
+        "raw": "@@237254540@@_CHIHO_Trung tam Y te Phu Loc_ CTCP CAP NUOC HUE 5510000370",
+        "truth_customer_id": "042002",
+        "predicted_customer_id": "096363",
+        "score": 0.6129,
+        "decision": "review",
+        "seen_customer": true,
+        "reason": "Weighted historical evidence; competing customer requires human review"
+      }
+    ],
+    "false_negative": [
+      {
+        "row_index": 14,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328569226_016700_B2620184_TT tien nuoc ky 7/2026 B2620184_016700_HD:016700@@7/2026; thoi gian GD:31/07/2026 23:54:06",
+        "truth_customer_id": "016700",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 15,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328569847_019807_B2621141_TT tien nuoc ky 7/2026 B2621141_019807_HD:019807@@7/2026; thoi gian GD:31/07/2026 23:54:25",
+        "truth_customer_id": "019807",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 16,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328570682_194404_B2622332_TT tien nuoc ky 7/2026 B2622332_194404_HD:194404@@7/2026; thoi gian GD:31/07/2026 23:54:56",
+        "truth_customer_id": "194404",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 17,
+        "raw": "REM Tfr Ac:8844055160 O@L_040001_212501_0_0_2328626720_214448_H0051459_TT tien nuoc ky 7/2026 H0051459_214448_HD:214448@@7/2026; thoi gian GD:01/08/2026 00:19:11",
+        "truth_customer_id": "214448",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 18,
+        "raw": "REM Tfr Ac:8832324835 O@L_040001_212501_0_0_2328951982_264052_A3680020_TT tien nuoc ky 7/2026 A3680020_264052_HD:264052@@7/2026",
+        "truth_customer_id": "264052",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 20,
+        "raw": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2328992803_228177_A4735287_TT tien nuoc ky 7/2026 A4735287_228177_HD:228177@@7/2026",
+        "truth_customer_id": "228177",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 21,
+        "raw": "REM Tfr Ac:5511409828 O@L_040001_212501_0_0_2329009168_284916_B4940624_TT tien nuoc ky 7/2026 B4940624_284916_HD:284916@@7/2026",
+        "truth_customer_id": "284916",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 22,
+        "raw": "REM Tfr Ac:5561282963 O@L_040001_212501_0_0_2329056764_210912_A4735132_TT tien nuoc ky 7/2026 A4735132_210912_HD:210912@@7/2026",
+        "truth_customer_id": "210912",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 23,
+        "raw": "REM Tfr Ac:5511313974 O@L_040001_212501_0_0_2329059995_136652_A6402045_TT tien nuoc ky 7/2026 A6402045_136652_HD:136652@@7/2026",
+        "truth_customer_id": "136652",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 24,
+        "raw": "REM Tfr Ac:5561111386 O@L_040001_212501_0_0_2329063292_311137_A1571835_TT tien nuoc ky 7/2026 A1571835_311137_HD:311137@@7/2026",
+        "truth_customer_id": "311137",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      }
+    ],
+    "ambiguous": [
+      {
+        "row_index": 375,
+        "customer_count": 2,
+        "raw": "REM 9901SP260803000101125 B/O Truong Mam non Phong Thu F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/462A26803KAZZVPP 2670110312221237Chuyen tien nuoc sach thang 7/2026 theo HD so 1095577;1045690 ngay 25/07/2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 380,
+        "customer_count": 145,
+        "raw": "TKThe :VND1625000210001, tai MSCBVNVX. VNPAY TT DV HTTH CN. HUE ngay 31.07.2026-020097042208031151372026VFM8925021"
+      },
+      {
+        "row_index": 381,
+        "customer_count": 2,
+        "raw": "REM 9901SP260803000105401 B/O KBNN KHU VUC XIII - PHONG GIAO DICH SO 14 F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/4003HUB026649181 DANG UY XA DAN DIENCHUYEN TIEN NUOC THANG 7/2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 388,
+        "customer_count": 18,
+        "raw": "REM 9901CI260803000107316 B/O TONG CONG TY TRUYEN THONG-CN TAP DOAN BU F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608031010011003793301203004 //SAL2026215S045025270005//VNPT MEDIA thanh toan tien dich vu thu ho tu ngay 31 07 2026 den ngay 31 07 2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 397,
+        "customer_count": 39,
+        "raw": "REM 9901CI260803000109182 B/O TONG CONG TY TRUYEN THONG-CN TAP DOAN BU F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608031010011003816301203008 //SAL2026215S045025270007//VNPT MEDIA thanh toan tien dich vu thu ho tu ngay 01 08 2026 den ngay 02 08 2026 Bank Charge .00 VAT .00"
+      }
+    ],
+    "correct": [
+      {
+        "row_index": 19,
+        "raw": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2328989758_256662_A0824925_TT tien nuoc ky 7/2026 A0824925_256662_HD:256662@@7/2026",
+        "truth_customer_id": "256662",
+        "predicted_customer_id": "256662",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 0.2,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.15,
+            "text": 0.25,
+            "structure": 0.15,
+            "number": 0.05,
+            "history": 0.1
+          },
+          "weighted_score": 0.8851,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 130,
+          "matched_pattern": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2144706790_256662_A0824925_TT tien nuoc ky 6/2026 A0824925_256662_HD:256662@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 135,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5511238846",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "256662",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a0824925",
+              "type": "REFERENCE_ID",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a0824925",
+              "type": "REFERENCE_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "256662",
+              "type": "REFERENCE_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5511238846"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5511238846",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+        }
+      },
+      {
+        "row_index": 25,
+        "raw": "REM Tfr Ac:5510939641 O@L_040001_212501_0_0_2329065116_041433_E7184797_TT tien nuoc ky 7/2026 E7184797_041433_HD:041433@@7/2026",
+        "truth_customer_id": "041433",
+        "predicted_customer_id": "041433",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 0.2,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.15,
+            "text": 0.25,
+            "structure": 0.15,
+            "number": 0.05,
+            "history": 0.1
+          },
+          "weighted_score": 0.8851,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 21,
+          "matched_pattern": "REM Tfr Ac:5510939641 O@L_040001_212501_0_0_2144342247_041433_E7184797_TT tien nuoc ky 6/2026 E7184797_041433_HD:041433@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 25,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5510939641",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "041433",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "e7184797",
+              "type": "REFERENCE_ID",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "e7184797",
+              "type": "REFERENCE_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "041433",
+              "type": "REFERENCE_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5510939641"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5510939641",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+        }
+      },
+      {
+        "row_index": 146,
+        "raw": "REM Tfr Ac:8600081746 O@L_040001_213103_0_0_2332498088_014017_B1010117_TT tien nuoc ky 7/2026 B1010117_014017_HD:014017@@7/2026_",
+        "truth_customer_id": "014017",
+        "predicted_customer_id": "014017",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 0.2,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.15,
+            "text": 0.25,
+            "structure": 0.15,
+            "number": 0.05,
+            "history": 0.1
+          },
+          "weighted_score": 0.8851,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 431,
+          "matched_pattern": "REM Tfr Ac:8600081746 O@L_040001_213103_0_0_2147966815_014017_B1010117_TT tien nuoc ky 6/2026 B1010117_014017_HD:014017@@6/2026_",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 442,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "8600081746",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "014017",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "b1010117",
+              "type": "REFERENCE_ID",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "b1010117",
+              "type": "REFERENCE_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "014017",
+              "type": "REFERENCE_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "8600081746"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 8600081746",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+        }
+      },
+      {
+        "row_index": 160,
+        "raw": "REM Tfr Ac:5510184052 O@L_040001_212501_0_0_2333291657_179576_A3013913_TT tien nuoc ky 7/2026 A3013913_179576_HD:179576@@7/2026",
+        "truth_customer_id": "179576",
+        "predicted_customer_id": "179576",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 0.2,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.15,
+            "text": 0.25,
+            "structure": 0.15,
+            "number": 0.05,
+            "history": 0.1
+          },
+          "weighted_score": 0.8851,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 1526,
+          "matched_pattern": "REM Tfr Ac:5510184052 O@L_040001_212501_0_0_2170581086_179576_A3013913_TT tien nuoc ky 6/2026 A3013913_179576_HD:179576@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 1550,
+            "date": "2026-07-03T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5510184052",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "179576",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a3013913",
+              "type": "REFERENCE_ID",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a3013913",
+              "type": "REFERENCE_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "179576",
+              "type": "REFERENCE_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5510184052"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5510184052",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+        }
+      },
+      {
+        "row_index": 249,
+        "raw": "REM Tfr Ac:8896455836 O@L_040001_212501_0_0_2337899436_200782_D5085112_TT tien nuoc ky 7/2026 D5085112_200782_HD:200782@@7/2026",
+        "truth_customer_id": "200782",
+        "predicted_customer_id": "200782",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 0.2,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.15,
+            "text": 0.25,
+            "structure": 0.15,
+            "number": 0.05,
+            "history": 0.1
+          },
+          "weighted_score": 0.8851,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 1419,
+          "matched_pattern": "REM Tfr Ac:8896455836 O@L_040001_212501_0_0_2163838754_200782_D5085112_TT tien nuoc ky 6/2026 D5085112_200782_HD:200782@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 1441,
+            "date": "2026-07-03T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "8896455836",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "200782",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "d5085112",
+              "type": "REFERENCE_ID",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "d5085112",
+              "type": "REFERENCE_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "200782",
+              "type": "REFERENCE_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "8896455836"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> <NUM_8> tt tien nuoc <NUM_9> <NUM_10> hd <NUM_11>",
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 8896455836",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "Training includes July confirmed labels only. August labels are never used for retrieval, reranking or knowledge updates.",
+    "Unseen customer IDs and matches without reliable customer-specific evidence return 0% confidence and manual_check. Ground truth is used only for evaluation.",
+    "FN includes edited descriptions and split payments. Multiple-customer matches are excluded from single-customer classification.",
+    "ko rows are skipped entirely. ht/pd/th are unresolved CMA labels and excluded from single-customer evaluation.",
+    "Unmatched raw descriptions are treated as filtered negatives; some may be edited FN positives. Negative labels need manual audit.",
+    "Thresholds are fixed at 0.90/0.60 and are not tuned on the evaluated rows.",
+    "Hash embeddings are lexical, not learned semantic embeddings. Install and configure the optional multilingual model for semantic retrieval.",
+    "Peak RSS covers this entire process; XLSX shared strings, reconciliation and knowledge are disk-backed."
+  ],
+  "reporting_policy": {
+    "description": "Every positive FN customer absent from the July registry is reported at 0% with manual_check. This reporting rule uses evaluation labels after prediction; classifier metrics use untouched model outputs.",
+    "unknown_customer_zero_confidence_rows": 6014,
+    "nonzero_model_suggestions_overridden": 18,
+    "original_predictions": "model_result in evidence.jsonl; model_score/model_decision/model_predicted_customer_id in predictions.csv"
+  }
+}

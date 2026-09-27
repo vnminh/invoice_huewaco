@@ -1,0 +1,117 @@
+# Hướng dẫn quản trị đối soát HueWACO
+
+Trang quản trị phục vụ hai việc: đối soát tệp ngân hàng và quản lý kiến thức đã được con người xác nhận. Dữ liệu mẫu theo tháng trong repository chỉ dành cho phát triển; giao diện không phụ thuộc một tháng cụ thể.
+
+## 1. Các khu vực trên giao diện
+
+| Khu vực | Dùng để làm gì |
+| --- | --- |
+| Đối soát giao dịch | Tải Excel ngân hàng chưa lọc, xem kết quả theo từng tệp, tìm giao dịch, duyệt và tải CSV. |
+| Học dữ liệu mới | Nhập Excel đã xác nhận hoặc CSV đã học; thêm khách hàng hoặc một mẫu mới. |
+| Quản lý kiến thức | Tìm khách hàng, xem tất cả mẫu của khách hàng, sửa/xóa hồ sơ hoặc mẫu; xem các bảng kiến thức hỗ trợ. |
+| Tác vụ xử lý | Theo dõi nhập/đối soát, dừng tác vụ, mở kết quả, tải CSV và xóa tệp làm việc. |
+| Hướng dẫn sử dụng | Hướng dẫn ngắn ngay trên trang. |
+
+Các con số đầu trang là số khách hàng và mẫu trong kho kiến thức. Trạng thái kết nối chỉ báo dịch vụ sẵn sàng hay gián đoạn; thông tin kỹ thuật về mã hóa ngữ nghĩa không xuất hiện trong luồng đối soát.
+
+## 2. Đối soát một tệp
+
+1. Chọn Excel `.xlsx` ngân hàng chưa lọc, rồi bấm **Bắt đầu đối soát**. Hiện tại bộ đọc xử lý sheet **BIDV**.
+2. Kết quả xuất hiện sau mỗi đợt đã xử lý. Có thể vào **Tác vụ xử lý** để theo dõi hoặc dừng.
+3. Tại **Tệp đang xem**, chọn đúng tệp cần làm việc. Kết quả của các tệp khác không bị trộn vào tệp đang chọn.
+4. Lọc theo đề xuất và trạng thái duyệt. Ô tìm kiếm nhận nội dung, mã hoặc tên khách hàng, không phân biệt hoa/thường và dấu tiếng Việt.
+5. Chọn **Kiểm tra** trên một dòng. Màn hình hiển thị nội dung hiện tại, mẫu trong lịch sử, nguồn mẫu và lý do so khớp. Mở phần đối chiếu số để xem giá trị, vai trò và thứ tự.
+
+| Đề xuất | Ý nghĩa |
+| --- | --- |
+| Có thể xác nhận | Có đủ bằng chứng để đề xuất khách hàng; vẫn cần người dùng xác nhận trước khi học. |
+| Cần duyệt | Có ứng viên nhưng chưa đủ điều kiện ghép tự động. |
+| Kiểm tra thủ công | Chưa biết khách hàng hoặc thiếu bằng chứng; điểm 0%. |
+| Không ghép | Không phải khoản ghi có phù hợp, hoặc có bằng chứng loại trừ. |
+
+**Điểm so khớp là điểm xếp hạng bằng chứng, không phải xác suất đã được hiệu chuẩn.**
+
+### Xóa hiển thị và xóa tệp khác nhau
+
+**Xóa hiển thị** chỉ làm trống bảng trên màn hình. Tệp, các xác nhận và kiến thức vẫn được giữ. Tự làm mới tiến trình không làm bảng xuất hiện lại; bấm **Làm mới**, đổi bộ lọc hoặc bắt đầu tệp đối soát mới để xem kết quả.
+
+**Xóa tệp làm việc** trong khu vực tác vụ xóa các tệp kết quả, tiến trình và xác nhận của tệp đó. Kiến thức đã học vẫn ở PostgreSQL. Tải CSV trước khi xóa nếu cần giữ kết quả để bàn giao.
+
+## 3. Xác nhận có tự học không?
+
+**Có: bấm Xác nhận & học sẽ học ngay trong cùng yêu cầu xử lý.** Không cần nút cập nhật kiến thức riêng sau đó.
+
+- Chỉ mở một dòng, chọn checkbox để đưa vào danh sách hoặc sửa ô mã/tên **chưa** làm hệ thống học.
+- Khi đã kiểm tra, nhập/chọn mã khách hàng và tên hoặc bí danh đúng, rồi bấm **Xác nhận & học**.
+- Với khách hàng mới, hệ thống thêm hồ sơ rồi học nội dung giao dịch cho khách hàng đó.
+- Với khách hàng đã có, hệ thống bổ sung mẫu mới hoặc cập nhật mẫu phù hợp. Các mẫu khác vẫn được giữ.
+- Khi sửa đề xuất từ khách hàng A sang B, hệ thống học cho B và ghi nhận bằng chứng không ghép giao dịch này với A.
+- Bấm **Không ghép khách hàng này** không tạo mẫu dương; nếu có khách hàng đã được đề xuất, hệ thống ghi nhận bằng chứng loại trừ.
+- Dòng đã xác nhận không được sửa ngầm qua thao tác xác nhận lại. Sửa kiến thức đã học bằng chức năng quản lý mẫu/hồ sơ.
+
+Nếu kết nối bị gián đoạn sau khi đã xác nhận, ý định xác nhận nằm trong tệp làm việc. Khi khởi động lại, hệ thống tiếp tục các xác nhận này. Có thể bấm **Tiếp tục học dữ liệu đã xác nhận** nếu cần. Dấu chống trùng bảo đảm thử lại không học hai lần.
+
+### Xác nhận nhiều dòng
+
+Chọn các dòng có khách hàng được đề xuất, rồi bấm **Xác nhận & học đã chọn** và xác nhận thao tác. Có thể chọn tối đa 100 dòng mỗi lần. Những dòng không có khách hàng phải được duyệt riêng để nhập đúng khách hàng.
+
+Mỗi dòng được xử lý độc lập: lỗi ở một dòng không hủy những dòng đã xác nhận thành công. Màn hình thông báo số dòng đã học và số dòng còn cần kiểm tra.
+
+## 4. Một khách hàng có nhiều mẫu
+
+Ví dụ khách hàng `001234` có các nội dung:
+
+```text
+TT KH:001234 HD:700012 TIEN NUOC
+CONG TY XYZ thanh toan tien nuoc KH:001234 HD:900045
+TT KH:001234 HD:900045 TIEN NUOC
+```
+
+Đây có thể là ba mẫu của cùng khách hàng. Mẫu thứ nhất và thứ ba cùng dạng chữ nhưng khác hợp đồng; chúng được giữ riêng. Không thay hợp đồng `700012` bằng `900045` rồi coi là cùng một số.
+
+Ngày/kỳ thanh toán và tham chiếu ngân hàng thay đổi không nhất thiết tạo mẫu mới. Hệ thống giữ nhiều giá trị theo đúng vị trí đối với những trường có thể biến đổi.
+
+Trong **Quản lý kiến thức**:
+
+1. Tìm khách hàng bằng mã hoặc tên.
+2. Mở **Chi tiết**, xem số mẫu đã học và bấm **Xem mẫu đã học**.
+3. Bấm **Thêm mẫu cho khách hàng này** nếu có một cách ghi mới. Mẫu cũ được giữ.
+4. Bấm **Lưu mẫu đã sửa** chỉ khi nội dung cũ có sai sót. Hệ thống tính lại cấu trúc và thông tin tìm kiếm của mẫu đó. Nếu trùng mẫu đã có thì gộp vào mẫu tương ứng.
+
+Sửa tên khách hàng cập nhật cả tên chuẩn hóa và thông tin tìm kiếm liên quan. Mã khách hàng không được thay đổi bằng thao tác sửa tên.
+
+## 5. Học từ tệp đã xác nhận
+
+### Excel
+
+Chọn tệp đã lọc/đã xác nhận ở **Học dữ liệu mới**, đánh dấu đã kiểm tra nhãn rồi bấm **Nhập & học dữ liệu**. Hệ thống đọc mọi sheet có cột IDKH, gồm các kênh trả tiền có trong tệp. Bỏ qua `ko`; các nhãn chưa phân giải như `ht/pd/th` không trở thành hồ sơ khách hàng.
+
+Nhập được lưu theo từng đợt. Dừng nhập sẽ giữ những đợt đã hoàn tất và hủy đợt đang xử lý. Tải lại cùng tệp sẽ đọc lại tệp, bỏ qua những dòng đã học; không cần xóa kiến thức để tiếp tục.
+
+### CSV đã học
+
+**CSV đã học** chỉ chứa dòng đã xác nhận thành công; không chứa các đề xuất chưa duyệt. Có thể nhập lại CSV này ở mục học dữ liệu, hoặc chuyển sang một kho kiến thức khác.
+
+| Cột | Nội dung |
+| --- | --- |
+| IDKH | Mã khách hàng dạng chuỗi, giữ số 0 đầu. Bắt buộc. |
+| TENKH | Tên/bí danh đã xác nhận. |
+| NOIDUNG | Nội dung chuyển tiền đầy đủ. Bắt buộc. |
+| NGAY | Ngày giao dịch, nên dùng `YYYY-MM-DD` hoặc ngày ISO có giờ. |
+| SOTIEN | Số không âm, không có phân cách hàng nghìn; dấu chấm là phần thập phân. |
+| NGANHANG | Ngân hàng/kênh trả tiền; mặc định BIDV nếu trống. |
+| NOIDUNG_GOC_B64 | Bản mã hóa nội dung gốc để bảo toàn nội dung khi xuất CSV. Không cần tự tạo. |
+
+Tệp dùng UTF-8; CSV tải từ hệ thống có BOM để Excel đọc tiếng Việt. Khi chỉnh CSV trong Excel, định dạng cột IDKH là **Text** để không mất số 0 đầu. Nếu sửa NOIDUNG, hệ thống dùng nội dung hiển thị mới; bản mã hóa chỉ dùng để khôi phục chính xác nội dung xuất chưa bị sửa.
+
+Nhập lại CSV có cùng nội dung/khách hàng/ngày/số tiền/kênh đã xác nhận không tăng thêm lần học. Khi nhập sang kho khác, các dòng được học vào kho đó.
+
+## 6. Quản lý tác vụ và dữ liệu
+
+Dừng được cả nhập kiến thức, đối soát và tác vụ tiếp tục xác nhận. Phần đang chạy dừng tại điểm kiểm tra an toàn, không ngắt thread giữa lúc ghi kiến thức. Tệp đã xử lý một phần vẫn có thể tải phần kết quả đã hoàn tất.
+
+Sửa/xóa kiến thức bị chặn khi còn tác vụ đang chạy hoặc xác nhận đang chờ hoàn tất. Điều này tránh sửa/xóa một mẫu trong khi mẫu đó đang được dùng hoặc được học.
+
+Xóa khách hàng xóa hồ sơ cùng các mẫu, số và liên kết trả tiền của khách hàng. Xóa mẫu chỉ xóa mẫu đó và dữ liệu tìm kiếm liên quan. Những kết quả/CSV đã tạo vẫn là bản ghi của lần xử lý trước; chúng không được tính lại ngầm khi sửa kiến thức.
+
+Các bảng phụ trợ chỉ xem. Dùng thao tác thêm/sửa/xóa hồ sơ và mẫu để hệ thống cập nhật các phần liên quan đồng bộ; không cần mở công cụ database.

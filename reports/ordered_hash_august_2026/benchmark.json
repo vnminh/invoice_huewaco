@@ -1,0 +1,1586 @@
+{
+  "created_at": "2026-09-26T07:08:22.971868+00:00",
+  "protocol": "Read previously saved July knowledge; test August BIDV only; no training or knowledge writes during evaluation",
+  "raw_file": "Ngan hang thang 08.2026.xlsx",
+  "ground_truth_file": "Ngan hang thang 8-2026 FN.xlsx",
+  "training_file": "Ngan hang thang 7-2026 FN.xlsx",
+  "training_sheets": [
+    "BIDV"
+  ],
+  "training_payers": {
+    "BIDV": 8048,
+    "VNPT": 543,
+    "VNPAY": 3445
+  },
+  "sheet": "BIDV",
+  "cutoff": null,
+  "batch_size": 1000,
+  "database": "saved SQLite verification fixture; production requires PostgreSQL",
+  "knowledge_snapshot": {
+    "imports": [
+      {
+        "file": "Ngan hang thang 7-2026 FN.xlsx",
+        "sha256": "82b328f1747cda74bbd6ebf57dc03cff77fa800bf455afba95824459869182db",
+        "status": "completed",
+        "sheets": [
+          "BIDV"
+        ],
+        "periods": [
+          "2026-07"
+        ],
+        "payers": {
+          "BIDV": 8048,
+          "VNPT": 543,
+          "VNPAY": 3445
+        },
+        "feature_extractor": "rules-v5-ordered-contracts",
+        "embedding_model": "hash",
+        "counts": {
+          "processed": 12149,
+          "confirmed": 12036,
+          "learned": 12036,
+          "unresolved": 8,
+          "skipped": 105
+        }
+      }
+    ],
+    "receipt_count": 12036,
+    "customer_count": 11753,
+    "pattern_count": 11880,
+    "last_period": "2026-07"
+  },
+  "feature_extractor": "rules-v5-ordered-contracts",
+  "precision_priority": {
+    "primary_metric": "auto_accept",
+    "automatic_threshold": 0.9,
+    "review_threshold": 0.6,
+    "scores_are_calibrated_probabilities": false
+  },
+  "known_customer_recall_ceiling": 0.19296833064949007,
+  "embedding_model": "hash",
+  "counts": {
+    "raw_rows": 8342,
+    "truth_rows": 11481,
+    "truth_unmatched_descriptions": 330,
+    "truth_unique_customers": 11193,
+    "truth_ko_skipped_rows": 127,
+    "truth_unresolved_rows": 8,
+    "training_rows": 12036,
+    "training_customers": 11753,
+    "heldout_rows": 8342,
+    "extractor_explicit_id": 6822,
+    "heldout_positive": 7452,
+    "unseen_customer_positives": 6014,
+    "manual_check": 6480,
+    "seen_customer_positives": 1438,
+    "auto_accept": 986,
+    "extractor_rules": 644,
+    "extractor_not_used": 486,
+    "heldout_negative": 500,
+    "reject": 486,
+    "ko_rows_skipped": 127,
+    "ambiguous_rows_excluded": 255,
+    "unresolved_rows_excluded": 8
+  },
+  "truth_payers": {
+    "*": 1,
+    "BIDV": 8296,
+    "VNPAY": 2750,
+    "VNPT": 434
+  },
+  "metrics": {
+    "classification": {
+      "precision": 1.0,
+      "recall": 0.13231347289318304,
+      "f1": 0.23370466935292725,
+      "f0_5": 0.4326079326079326,
+      "true_positive": 986,
+      "false_positive": 0,
+      "false_negative": 6466
+    },
+    "auto_accept": {
+      "precision": 1.0,
+      "recall": 0.13231347289318304,
+      "f1": 0.23370466935292725,
+      "f0_5": 0.4326079326079326,
+      "true_positive": 986,
+      "false_positive": 0,
+      "false_negative": 6466
+    },
+    "seen_customers": {
+      "precision": 1.0,
+      "recall": 0.6856745479833102,
+      "f1": 0.8135313531353136,
+      "f0_5": 0.9160163507989595,
+      "true_positive": 986,
+      "false_positive": 0,
+      "false_negative": 452
+    },
+    "seen_customers_auto_accept": {
+      "precision": 1.0,
+      "recall": 0.6856745479833102,
+      "f1": 0.8135313531353136,
+      "f0_5": 0.9160163507989595,
+      "true_positive": 986,
+      "false_positive": 0,
+      "false_negative": 452
+    },
+    "filtering": {
+      "precision": 1.0,
+      "recall": 0.13231347289318304,
+      "f1": 0.23370466935292725,
+      "f0_5": 0.4326079326079326,
+      "true_positive": 986,
+      "false_positive": 0,
+      "false_negative": 6466
+    }
+  },
+  "duration_seconds": 76.981,
+  "process_peak_rss_mb": 90.77,
+  "examples": {
+    "correct": [
+      {
+        "row_index": 19,
+        "raw": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2328989758_256662_A0824925_TT tien nuoc ky 7/2026 A0824925_256662_HD:256662@@7/2026",
+        "truth_customer_id": "256662",
+        "predicted_customer_id": "256662",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận.",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 1.0,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.1,
+            "text": 0.2,
+            "structure": 0.15,
+            "number": 0.15,
+            "history": 0.1
+          },
+          "weighted_score": 0.9251,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 130,
+          "matched_pattern": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2144706790_256662_A0824925_TT tien nuoc ky 6/2026 A0824925_256662_HD:256662@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 135,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> a<NUM_8> tt tien nuoc a<NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5511238846",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "256662",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a0824925",
+              "type": "INVOICE_CODE",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a0824925",
+              "type": "INVOICE_CODE",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "256662",
+              "type": "CUSTOMER_ID",
+              "slot": 10,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "256662",
+              "type": "CONTRACT_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "numeric_comparison": {
+            "template_compatible": true,
+            "lexical_template_similarity": 1.0,
+            "numeric_structure_similarity": 1.0,
+            "ordered_comparison": [
+              {
+                "slot": 1,
+                "query_value": "5511238846",
+                "history_value": "5511238846",
+                "type": "ACCOUNT_ID",
+                "history_type": "ACCOUNT_ID",
+                "history_slot": 1,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 2,
+                "query_value": "040001",
+                "history_value": "040001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 2,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 3,
+                "query_value": "212501",
+                "history_value": "212501",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 3,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 4,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 4,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 5,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 5,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 6,
+                "query_value": "2328989758",
+                "history_value": "2144706790",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 6,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 7,
+                "query_value": "256662",
+                "history_value": "256662",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 7,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 8,
+                "query_value": "a0824925",
+                "history_value": "a0824925",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 8,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 9,
+                "query_value": "a0824925",
+                "history_value": "a0824925",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 9,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 10,
+                "query_value": "256662",
+                "history_value": "256662",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 10,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 11,
+                "query_value": "256662",
+                "history_value": "256662",
+                "type": "CONTRACT_ID",
+                "history_type": "CONTRACT_ID",
+                "history_slot": 11,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              }
+            ],
+            "stable_sequence_matches": true,
+            "aligned_contracts": [
+              "256662"
+            ],
+            "contract_conflict": false,
+            "code_conflicts": [],
+            "confirmed_customer_tokens": [],
+            "ordered_agreement": 1.0
+          },
+          "explicit_contract_ids": [
+            "256662"
+          ],
+          "unique_contract_match": true,
+          "confirmed_customer_token": false,
+          "unique_mixed_codes": [],
+          "consistent_new_contracts": [],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5511238846"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> a<NUM_8> tt tien nuoc a<NUM_9> <NUM_10> hd <NUM_11>",
+          "payment_detail_similarity": 0.9266,
+          "distinctive_detail_words": [],
+          "branch_markers_agree": true,
+          "unique_payer_accounts": [],
+          "unique_payment_details": false,
+          "feature_extraction": {
+            "provider": "rules",
+            "status": "explicit_id",
+            "entities": []
+          },
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5511238846",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "match_steps_vi": [
+            "Tìm được 1 mẫu lịch sử từ dữ liệu đã xác nhận.",
+            "ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.",
+            "Độ tương đồng nội dung 100.0%; độ tương đồng thứ tự chữ/số 100.0%.",
+            "Tài khoản trả tiền khớp: 5511238846",
+            "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+          ]
+        }
+      },
+      {
+        "row_index": 25,
+        "raw": "REM Tfr Ac:5510939641 O@L_040001_212501_0_0_2329065116_041433_E7184797_TT tien nuoc ky 7/2026 E7184797_041433_HD:041433@@7/2026",
+        "truth_customer_id": "041433",
+        "predicted_customer_id": "041433",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận.",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 1.0,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.1,
+            "text": 0.2,
+            "structure": 0.15,
+            "number": 0.15,
+            "history": 0.1
+          },
+          "weighted_score": 0.9251,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 21,
+          "matched_pattern": "REM Tfr Ac:5510939641 O@L_040001_212501_0_0_2144342247_041433_E7184797_TT tien nuoc ky 6/2026 E7184797_041433_HD:041433@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 25,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> e<NUM_8> tt tien nuoc e<NUM_9> <NUM_10> hd <NUM_11>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5510939641",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "041433",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "e7184797",
+              "type": "INVOICE_CODE",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "e7184797",
+              "type": "INVOICE_CODE",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "041433",
+              "type": "CUSTOMER_ID",
+              "slot": 10,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "041433",
+              "type": "CONTRACT_ID",
+              "slot": 11,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "numeric_comparison": {
+            "template_compatible": true,
+            "lexical_template_similarity": 1.0,
+            "numeric_structure_similarity": 1.0,
+            "ordered_comparison": [
+              {
+                "slot": 1,
+                "query_value": "5510939641",
+                "history_value": "5510939641",
+                "type": "ACCOUNT_ID",
+                "history_type": "ACCOUNT_ID",
+                "history_slot": 1,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 2,
+                "query_value": "040001",
+                "history_value": "040001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 2,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 3,
+                "query_value": "212501",
+                "history_value": "212501",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 3,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 4,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 4,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 5,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 5,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 6,
+                "query_value": "2329065116",
+                "history_value": "2144342247",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 6,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 7,
+                "query_value": "041433",
+                "history_value": "041433",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 7,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 8,
+                "query_value": "e7184797",
+                "history_value": "e7184797",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 8,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 9,
+                "query_value": "e7184797",
+                "history_value": "e7184797",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 9,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 10,
+                "query_value": "041433",
+                "history_value": "041433",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 10,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 11,
+                "query_value": "041433",
+                "history_value": "041433",
+                "type": "CONTRACT_ID",
+                "history_type": "CONTRACT_ID",
+                "history_slot": 11,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              }
+            ],
+            "stable_sequence_matches": true,
+            "aligned_contracts": [
+              "041433"
+            ],
+            "contract_conflict": false,
+            "code_conflicts": [],
+            "confirmed_customer_tokens": [],
+            "ordered_agreement": 1.0
+          },
+          "explicit_contract_ids": [
+            "041433"
+          ],
+          "unique_contract_match": true,
+          "confirmed_customer_token": false,
+          "unique_mixed_codes": [],
+          "consistent_new_contracts": [],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5510939641"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> e<NUM_8> tt tien nuoc e<NUM_9> <NUM_10> hd <NUM_11>",
+          "payment_detail_similarity": 0.9358,
+          "distinctive_detail_words": [],
+          "branch_markers_agree": true,
+          "unique_payer_accounts": [
+            "5510939641"
+          ],
+          "unique_payment_details": false,
+          "feature_extraction": {
+            "provider": "rules",
+            "status": "explicit_id",
+            "entities": []
+          },
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5510939641",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "match_steps_vi": [
+            "Tìm được 1 mẫu lịch sử từ dữ liệu đã xác nhận.",
+            "ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.",
+            "Độ tương đồng nội dung 100.0%; độ tương đồng thứ tự chữ/số 100.0%.",
+            "Tài khoản trả tiền khớp: 5510939641",
+            "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+          ]
+        }
+      },
+      {
+        "row_index": 70,
+        "raw": "REM Tfr Ac:5510331733 O@L_040001_212001_0_0_2329539047_035980_TT tien nuoc ky 7/2026 A2482031-035980-HD:035980@@7/2026",
+        "truth_customer_id": "035980",
+        "predicted_customer_id": "035980",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận.",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 1.0,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.1,
+            "text": 0.2,
+            "structure": 0.15,
+            "number": 0.15,
+            "history": 0.1
+          },
+          "weighted_score": 0.9251,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 124,
+          "matched_pattern": "REM Tfr Ac:5510331733 O@L_040001_212001_0_0_2144645083_035980_TT tien nuoc ky 6/2026 A2482031-035980-HD:035980@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 129,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> tt tien nuoc a<NUM_8> <NUM_9> hd <NUM_10>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5510331733",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "035980",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "a2482031",
+              "type": "INVOICE_CODE",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "035980",
+              "type": "CUSTOMER_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "035980",
+              "type": "CONTRACT_ID",
+              "slot": 10,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "numeric_comparison": {
+            "template_compatible": true,
+            "lexical_template_similarity": 1.0,
+            "numeric_structure_similarity": 1.0,
+            "ordered_comparison": [
+              {
+                "slot": 1,
+                "query_value": "5510331733",
+                "history_value": "5510331733",
+                "type": "ACCOUNT_ID",
+                "history_type": "ACCOUNT_ID",
+                "history_slot": 1,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 2,
+                "query_value": "040001",
+                "history_value": "040001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 2,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 3,
+                "query_value": "212001",
+                "history_value": "212001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 3,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 4,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 4,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 5,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 5,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 6,
+                "query_value": "2329539047",
+                "history_value": "2144645083",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 6,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 7,
+                "query_value": "035980",
+                "history_value": "035980",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 7,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 8,
+                "query_value": "a2482031",
+                "history_value": "a2482031",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 8,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 9,
+                "query_value": "035980",
+                "history_value": "035980",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 9,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 10,
+                "query_value": "035980",
+                "history_value": "035980",
+                "type": "CONTRACT_ID",
+                "history_type": "CONTRACT_ID",
+                "history_slot": 10,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              }
+            ],
+            "stable_sequence_matches": true,
+            "aligned_contracts": [
+              "035980"
+            ],
+            "contract_conflict": false,
+            "code_conflicts": [],
+            "confirmed_customer_tokens": [],
+            "ordered_agreement": 1.0
+          },
+          "explicit_contract_ids": [
+            "035980"
+          ],
+          "unique_contract_match": true,
+          "confirmed_customer_token": false,
+          "unique_mixed_codes": [],
+          "consistent_new_contracts": [],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5510331733"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> tt tien nuoc a<NUM_8> <NUM_9> hd <NUM_10>",
+          "payment_detail_similarity": 0.92,
+          "distinctive_detail_words": [],
+          "branch_markers_agree": true,
+          "unique_payer_accounts": [
+            "5510331733"
+          ],
+          "unique_payment_details": false,
+          "feature_extraction": {
+            "provider": "rules",
+            "status": "explicit_id",
+            "entities": []
+          },
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5510331733",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "match_steps_vi": [
+            "Tìm được 1 mẫu lịch sử từ dữ liệu đã xác nhận.",
+            "ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.",
+            "Độ tương đồng nội dung 100.0%; độ tương đồng thứ tự chữ/số 100.0%.",
+            "Tài khoản trả tiền khớp: 5510331733",
+            "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+          ]
+        }
+      },
+      {
+        "row_index": 94,
+        "raw": "TKThe :1030246730, tai BFTVVNVX. MBVCB.15371865496.018204.TT nuoc sach T7-298778.CT tu 1030246730 LE VAN HANH toi 5510000370 CONG TY CO PHAN CAP NUOC HUE tai BIDV-020097043608010952252026DBof018204",
+        "truth_customer_id": "298778",
+        "predicted_customer_id": "298778",
+        "score": 0.95,
+        "decision": "auto_accept",
+        "reason": "Confirmed customer token at the same template position",
+        "evidence": {
+          "reason": "Confirmed customer token at the same template position",
+          "reason_vi": "Số đã gắn với khách hàng từ dữ liệu tháng 7 trùng chính xác tại cùng vị trí trong mẫu nội dung.",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 0.9482,
+            "structure": 0.88,
+            "number": 1.0,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.1,
+            "text": 0.2,
+            "structure": 0.15,
+            "number": 0.15,
+            "history": 0.1
+          },
+          "weighted_score": 0.8967,
+          "vector_score": 0.9523,
+          "embedding_model": "hash",
+          "matched_pattern_id": 3842,
+          "matched_pattern": "TKThe :1030246730 tai BFTVVNVX. MBVCB.15102168730.742813.298778-T6.CT tu 1030246730 LE VAN HANH toi 5510000370 CONG TY CO PHAN CAP NUOC HUE tai BIDV-020097043607131632052026DBgg742813",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 3908,
+            "date": "2026-07-13T00:00:00"
+          },
+          "matched_template": "tkthe <NUM_1> tai bftvvnvx mbvcb <NUM_2> <NUM_3> <NUM_4> ct tu <NUM_5> le van hanh toi <NUM_6> cong ty co phan cap nuoc hue tai bidv <NUM_7>dbgg<NUM_7>",
+          "matched_aliases": [],
+          "explicit_customer_id": false,
+          "matched_numbers": [
+            {
+              "value": "1030246730",
+              "type": "CARD_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "numeric_comparison": {
+            "template_compatible": true,
+            "lexical_template_similarity": 0.946,
+            "numeric_structure_similarity": 1.0,
+            "ordered_comparison": [
+              {
+                "slot": 1,
+                "query_value": "1030246730",
+                "history_value": "1030246730",
+                "type": "CARD_ID",
+                "history_type": "CARD_ID",
+                "history_slot": 1,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 2,
+                "query_value": "15371865496",
+                "history_value": "15102168730",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 2,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 3,
+                "query_value": "018204",
+                "history_value": "742813",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 3,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 4,
+                "query_value": "298778",
+                "history_value": "298778",
+                "type": "UNKNOWN_NUMBER",
+                "history_type": "UNKNOWN_NUMBER",
+                "history_slot": 4,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 5,
+                "query_value": "1030246730",
+                "history_value": "1030246730",
+                "type": "UNKNOWN_NUMBER",
+                "history_type": "UNKNOWN_NUMBER",
+                "history_slot": 5,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 6,
+                "query_value": "5510000370",
+                "history_value": "5510000370",
+                "type": "RECEIVER_ACCOUNT",
+                "history_type": "RECEIVER_ACCOUNT",
+                "history_slot": 6,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 7,
+                "query_value": "020097043608010952252026dbof018204",
+                "history_value": "020097043607131632052026dbgg742813",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 7,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": false,
+                "variable_reference": true
+              }
+            ],
+            "stable_sequence_matches": true,
+            "aligned_contracts": [],
+            "contract_conflict": false,
+            "code_conflicts": [],
+            "confirmed_customer_tokens": [
+              "298778"
+            ],
+            "ordered_agreement": 1.0
+          },
+          "explicit_contract_ids": [],
+          "unique_contract_match": false,
+          "confirmed_customer_token": true,
+          "unique_mixed_codes": [],
+          "consistent_new_contracts": [],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "1030246730"
+          ],
+          "query_template": "tkthe <NUM_1> tai bftvvnvx mbvcb <NUM_2> <NUM_3> tt nuoc sach <NUM_4> ct tu <NUM_5> le van hanh toi <NUM_6> cong ty co phan cap nuoc hue tai bidv <NUM_7>dbof<NUM_7>",
+          "payment_detail_similarity": 0.7547,
+          "distinctive_detail_words": [
+            "ct",
+            "hanh",
+            "le",
+            "mbvcb",
+            "toi",
+            "van"
+          ],
+          "branch_markers_agree": true,
+          "unique_payer_accounts": [],
+          "unique_payment_details": false,
+          "feature_extraction": {
+            "provider": "rules",
+            "status": "rules",
+            "entities": []
+          },
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "No exact customer ID/name agreement.",
+            "Template similarity 94.8%; ordered structure similarity 88.0%.",
+            "Matching payer accounts: 1030246730",
+            "Confirmed customer token at the same template position"
+          ],
+          "match_steps_vi": [
+            "Tìm được 1 mẫu lịch sử từ dữ liệu đã xác nhận.",
+            "Chưa tìm thấy ID hoặc tên khách hàng khớp chính xác.",
+            "Độ tương đồng nội dung 94.8%; độ tương đồng thứ tự chữ/số 88.0%.",
+            "Tài khoản trả tiền khớp: 1030246730",
+            "Số đã gắn với khách hàng từ dữ liệu tháng 7 trùng chính xác tại cùng vị trí trong mẫu nội dung."
+          ]
+        }
+      },
+      {
+        "row_index": 140,
+        "raw": "REM Tfr Ac:5567448888 O@L_040001_212001_0_0_2332230044_282040_TT tien nuoc ky 7/2026 CQ023612-282040-HD:282040@@7/2026",
+        "truth_customer_id": "282040",
+        "predicted_customer_id": "282040",
+        "score": 0.98,
+        "decision": "auto_accept",
+        "reason": "Explicit customer ID plus matching confirmed transfer template",
+        "evidence": {
+          "reason": "Explicit customer ID plus matching confirmed transfer template",
+          "reason_vi": "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận.",
+          "features": {
+            "customer": 1.0,
+            "payer": 1.0,
+            "text": 1.0,
+            "structure": 1.0,
+            "number": 1.0,
+            "history": 0.2505
+          },
+          "weights": {
+            "customer": 0.3,
+            "payer": 0.1,
+            "text": 0.2,
+            "structure": 0.15,
+            "number": 0.15,
+            "history": 0.1
+          },
+          "weighted_score": 0.9251,
+          "vector_score": 1.0,
+          "embedding_model": "hash",
+          "matched_pattern_id": 403,
+          "matched_pattern": "REM Tfr Ac:5567448888 O@L_040001_212001_0_0_2147276755_282040_TT tien nuoc ky 6/2026 CQ023612-282040-HD:282040@@6/2026",
+          "pattern_source": {
+            "file": "Ngan hang thang 7-2026 FN.xlsx",
+            "row": 411,
+            "date": "2026-07-01T00:00:00"
+          },
+          "matched_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> tt tien nuoc cq<NUM_8> <NUM_9> hd <NUM_10>",
+          "matched_aliases": [],
+          "explicit_customer_id": true,
+          "matched_numbers": [
+            {
+              "value": "5567448888",
+              "type": "ACCOUNT_ID",
+              "slot": 1,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "282040",
+              "type": "CUSTOMER_ID",
+              "slot": 7,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "cq023612",
+              "type": "INVOICE_CODE",
+              "slot": 8,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "282040",
+              "type": "CUSTOMER_ID",
+              "slot": 9,
+              "same_slot": true,
+              "confidence": 0.2
+            },
+            {
+              "value": "282040",
+              "type": "CONTRACT_ID",
+              "slot": 10,
+              "same_slot": true,
+              "confidence": 0.2
+            }
+          ],
+          "numeric_comparison": {
+            "template_compatible": true,
+            "lexical_template_similarity": 1.0,
+            "numeric_structure_similarity": 1.0,
+            "ordered_comparison": [
+              {
+                "slot": 1,
+                "query_value": "5567448888",
+                "history_value": "5567448888",
+                "type": "ACCOUNT_ID",
+                "history_type": "ACCOUNT_ID",
+                "history_slot": 1,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 2,
+                "query_value": "040001",
+                "history_value": "040001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 2,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 3,
+                "query_value": "212001",
+                "history_value": "212001",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 3,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 4,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 4,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 5,
+                "query_value": "0",
+                "history_value": "0",
+                "type": "BANK_PROTOCOL",
+                "history_type": "BANK_PROTOCOL",
+                "history_slot": 5,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 6,
+                "query_value": "2332230044",
+                "history_value": "2147276755",
+                "type": "BANK_REFERENCE",
+                "history_type": "BANK_REFERENCE",
+                "history_slot": 6,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": false,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 7,
+                "query_value": "282040",
+                "history_value": "282040",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 7,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 8,
+                "query_value": "cq023612",
+                "history_value": "cq023612",
+                "type": "INVOICE_CODE",
+                "history_type": "INVOICE_CODE",
+                "history_slot": 8,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": true
+              },
+              {
+                "slot": 9,
+                "query_value": "282040",
+                "history_value": "282040",
+                "type": "CUSTOMER_ID",
+                "history_type": "CUSTOMER_ID",
+                "history_slot": 9,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              },
+              {
+                "slot": 10,
+                "query_value": "282040",
+                "history_value": "282040",
+                "type": "CONTRACT_ID",
+                "history_type": "CONTRACT_ID",
+                "history_slot": 10,
+                "absolute_slot_match": true,
+                "same_role": true,
+                "exact": true,
+                "same_format": true,
+                "variable_reference": false
+              }
+            ],
+            "stable_sequence_matches": true,
+            "aligned_contracts": [
+              "282040"
+            ],
+            "contract_conflict": false,
+            "code_conflicts": [],
+            "confirmed_customer_tokens": [],
+            "ordered_agreement": 1.0
+          },
+          "explicit_contract_ids": [
+            "282040"
+          ],
+          "unique_contract_match": true,
+          "confirmed_customer_token": false,
+          "unique_mixed_codes": [],
+          "consistent_new_contracts": [],
+          "candidate_count": 1,
+          "history_seen_count": 1,
+          "history_period": "2026-07",
+          "matched_payer_accounts": [
+            "5567448888"
+          ],
+          "query_template": "rem tfr ac <NUM_1> o l <NUM_2> <NUM_3> <NUM_4> <NUM_5> <NUM_6> <NUM_7> tt tien nuoc cq<NUM_8> <NUM_9> hd <NUM_10>",
+          "payment_detail_similarity": 0.92,
+          "distinctive_detail_words": [
+            "cq"
+          ],
+          "branch_markers_agree": true,
+          "unique_payer_accounts": [
+            "5567448888"
+          ],
+          "unique_payment_details": false,
+          "feature_extraction": {
+            "provider": "rules",
+            "status": "explicit_id",
+            "entities": []
+          },
+          "match_steps": [
+            "Retrieved 1 historical candidates from confirmed knowledge.",
+            "Explicit customer ID agrees with the stored customer.",
+            "Template similarity 100.0%; ordered structure similarity 100.0%.",
+            "Matching payer accounts: 5567448888",
+            "Explicit customer ID plus matching confirmed transfer template"
+          ],
+          "match_steps_vi": [
+            "Tìm được 1 mẫu lịch sử từ dữ liệu đã xác nhận.",
+            "ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.",
+            "Độ tương đồng nội dung 100.0%; độ tương đồng thứ tự chữ/số 100.0%.",
+            "Tài khoản trả tiền khớp: 5567448888",
+            "ID khách hàng trùng khớp và nội dung tương đồng với mẫu chuyển tiền đã xác nhận."
+          ]
+        }
+      }
+    ],
+    "false_positive": [],
+    "false_negative": [
+      {
+        "row_index": 14,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328569226_016700_B2620184_TT tien nuoc ky 7/2026 B2620184_016700_HD:016700@@7/2026; thoi gian GD:31/07/2026 23:54:06",
+        "truth_customer_id": "016700",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 15,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328569847_019807_B2621141_TT tien nuoc ky 7/2026 B2621141_019807_HD:019807@@7/2026; thoi gian GD:31/07/2026 23:54:25",
+        "truth_customer_id": "019807",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 16,
+        "raw": "REM Tfr Ac:5510890854 O@L_040001_212501_0_0_2328570682_194404_B2622332_TT tien nuoc ky 7/2026 B2622332_194404_HD:194404@@7/2026; thoi gian GD:31/07/2026 23:54:56",
+        "truth_customer_id": "194404",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 17,
+        "raw": "REM Tfr Ac:8844055160 O@L_040001_212501_0_0_2328626720_214448_H0051459_TT tien nuoc ky 7/2026 H0051459_214448_HD:214448@@7/2026; thoi gian GD:01/08/2026 00:19:11",
+        "truth_customer_id": "214448",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 18,
+        "raw": "REM Tfr Ac:8832324835 O@L_040001_212501_0_0_2328951982_264052_A3680020_TT tien nuoc ky 7/2026 A3680020_264052_HD:264052@@7/2026",
+        "truth_customer_id": "264052",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 20,
+        "raw": "REM Tfr Ac:5511238846 O@L_040001_212501_0_0_2328992803_228177_A4735287_TT tien nuoc ky 7/2026 A4735287_228177_HD:228177@@7/2026",
+        "truth_customer_id": "228177",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 21,
+        "raw": "REM Tfr Ac:5511409828 O@L_040001_212501_0_0_2329009168_284916_B4940624_TT tien nuoc ky 7/2026 B4940624_284916_HD:284916@@7/2026",
+        "truth_customer_id": "284916",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 22,
+        "raw": "REM Tfr Ac:5561282963 O@L_040001_212501_0_0_2329056764_210912_A4735132_TT tien nuoc ky 7/2026 A4735132_210912_HD:210912@@7/2026",
+        "truth_customer_id": "210912",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 23,
+        "raw": "REM Tfr Ac:5511313974 O@L_040001_212501_0_0_2329059995_136652_A6402045_TT tien nuoc ky 7/2026 A6402045_136652_HD:136652@@7/2026",
+        "truth_customer_id": "136652",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      },
+      {
+        "row_index": 24,
+        "raw": "REM Tfr Ac:5561111386 O@L_040001_212501_0_0_2329063292_311137_A1571835_TT tien nuoc ky 7/2026 A1571835_311137_HD:311137@@7/2026",
+        "truth_customer_id": "311137",
+        "predicted_customer_id": null,
+        "score": 0.0,
+        "decision": "manual_check",
+        "seen_customer": false,
+        "reason": "Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required"
+      }
+    ],
+    "ambiguous": [
+      {
+        "row_index": 375,
+        "customer_count": 2,
+        "raw": "REM 9901SP260803000101125 B/O Truong Mam non Phong Thu F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/462A26803KAZZVPP 2670110312221237Chuyen tien nuoc sach thang 7/2026 theo HD so 1095577;1045690 ngay 25/07/2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 380,
+        "customer_count": 145,
+        "raw": "TKThe :VND1625000210001, tai MSCBVNVX. VNPAY TT DV HTTH CN. HUE ngay 31.07.2026-020097042208031151372026VFM8925021"
+      },
+      {
+        "row_index": 381,
+        "customer_count": 2,
+        "raw": "REM 9901SP260803000105401 B/O KBNN KHU VUC XIII - PHONG GIAO DICH SO 14 F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/4003HUB026649181 DANG UY XA DAN DIENCHUYEN TIEN NUOC THANG 7/2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 388,
+        "customer_count": 18,
+        "raw": "REM 9901CI260803000107316 B/O TONG CONG TY TRUYEN THONG-CN TAP DOAN BU F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608031010011003793301203004 //SAL2026215S045025270005//VNPT MEDIA thanh toan tien dich vu thu ho tu ngay 31 07 2026 den ngay 31 07 2026 Bank Charge .00 VAT .00"
+      },
+      {
+        "row_index": 397,
+        "customer_count": 39,
+        "raw": "REM 9901CI260803000109182 B/O TONG CONG TY TRUYEN THONG-CN TAP DOAN BU F/O-5510000370 CONG TY CO PHAN CAP NUOC HUE DTLS-REF/202608031010011003816301203008 //SAL2026215S045025270007//VNPT MEDIA thanh toan tien dich vu thu ho tu ngay 01 08 2026 den ngay 02 08 2026 Bank Charge .00 VAT .00"
+      }
+    ]
+  },
+  "limitations": [
+    "Training includes July confirmed labels only. August labels are never used for retrieval, reranking or knowledge updates.",
+    "Unseen customer IDs and matches without reliable customer-specific evidence return 0% confidence and manual_check. Ground truth is used only for evaluation.",
+    "FN includes edited descriptions and split payments. Multiple-customer matches are excluded from single-customer classification.",
+    "ko rows are skipped entirely. ht/pd/th are unresolved CMA labels and excluded from single-customer evaluation.",
+    "Unmatched raw descriptions are treated as filtered negatives; some may be edited FN positives. Negative labels need manual audit.",
+    "Thresholds are fixed. Engineering changes were informed by errors in the August benchmark; reported improvements are development-set results, not a new untouched holdout.",
+    "Hash embeddings are lexical and used only as an ablation.",
+    "Peak RSS covers this entire process; XLSX shared strings, reconciliation and knowledge are disk-backed."
+  ],
+  "reporting_policy": {
+    "description": "Every positive FN customer absent from the July registry is reported at 0% with manual_check. This reporting rule uses evaluation labels after prediction; classifier metrics use untouched model outputs.",
+    "unknown_customer_zero_confidence_rows": 6014,
+    "nonzero_model_suggestions_overridden": 0,
+    "original_predictions": "model_result in evidence.jsonl; model_score/model_decision/model_predicted_customer_id in predictions.csv"
+  }
+}
