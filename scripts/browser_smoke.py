@@ -23,7 +23,7 @@ from conftest import workbook
 def main():
     with tempfile.TemporaryDirectory(prefix='invoice-ui-smoke-') as directory:
         directory = Path(directory)
-        engine = make_engine('sqlite:///' + str(directory / 'knowledge.sqlite'))
+        engine = make_engine('sqlite:///' + (directory / 'knowledge.sqlite').as_posix())
         Base.metadata.create_all(engine)
         core = Core()
         history = 'REM Tfr Ac:8828533184 O@L_040001_212501_0_0_2143591348_207241_E5564054_TT tien nuoc ky 6/2026 E5564054_207241_HD:207241@@6/2026; thoi gian GD:01/07/2026 00:08:46'

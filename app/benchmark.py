@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import ExitStack, closing
 from datetime import datetime, timezone
 import csv
 import json
 from pathlib import Path
-import resource
 import sqlite3
 import tempfile
 import time
@@ -16,6 +16,7 @@ from .db import Base, Customer, make_engine, sessions
 from .excel import ExcelTransaction, StreamingWorkbook
 from .normalize import fold
 from .knowledge import frozen_knowledge_info
+from .platform_utils import process_peak_rss_mb
 
 
 def reconciliation_key(raw):
@@ -41,9 +42,10 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
     examples = {'correct': [], 'false_positive': [], 'false_negative': [], 'ambiguous': []}
     saved_knowledge = knowledge_engine is not None
     snapshot = None
-    with tempfile.TemporaryDirectory(prefix='invoice-benchmark-') as directory:
+    with tempfile.TemporaryDirectory(prefix='invoice-benchmark-') as directory, ExitStack() as resources:
         directory = Path(directory)
-        reconciliation = sqlite3.connect(str(directory / 'reconciliation.sqlite'))
+        engine = None
+        reconciliation = resources.enter_context(closing(sqlite3.connect(str(directory / 'reconciliation.sqlite'))))
         reconciliation.execute('PRAGMA cache_size=-4096')
         reconciliation.executescript('''
             CREATE TABLE raw (row_index INTEGER PRIMARY KEY,key TEXT,raw TEXT,reference TEXT,date TEXT,amount REAL,debit REAL);
@@ -83,7 +85,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
             ''')
             # Production uses PostgreSQL. The standalone harness isolates labels and knowledge
             # in a temporary SQLite DB so running it never mutates the application knowledge.
-            engine = knowledge_engine if saved_knowledge else make_engine(database_url or 'sqlite:///' + str(directory / 'knowledge.sqlite'))
+            engine = knowledge_engine if saved_knowledge else make_engine(database_url or 'sqlite:///' + (directory / 'knowledge.sqlite').as_posix())
             if not saved_knowledge:
                 if engine.dialect.name != 'sqlite':
                     raise ValueError('Use knowledge_engine to benchmark saved PostgreSQL knowledge')
@@ -131,6 +133,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                     FROM raw r JOIN labels l ON l.key=r.key
                     WHERE substr(r.date,1,10) < ? AND r.amount>0 AND l.label_count=1 AND l.skipped=0
                     ORDER BY r.date,r.row_index''', (cutoff,))
+                resources.callback(training.close)
                 while batch := training.fetchmany(batch_size):
                     with factory.begin() as session:
                         for row_index, raw, date, amount, customer_id, name in batch:
@@ -146,6 +149,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                 SELECT r.row_index,r.raw,r.date,r.amount,r.debit,l.label_count,l.customer_id,l.name,l.unresolved,l.skipped
                 FROM raw r LEFT JOIN labels l ON l.key=r.key
                 WHERE substr(r.date,1,10) >= ? ORDER BY r.date,r.row_index''', ('' if training_path or saved_knowledge else cutoff,))
+            resources.callback(heldout.close)
             from .core import id_key
             from .db import Posting
             from sqlalchemy import select
@@ -235,10 +239,9 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
             if saved_knowledge:
                 if frozen_knowledge_info(engine, earliest_test) != snapshot:
                     raise ValueError('Knowledge changed during benchmark; rerun against frozen July knowledge')
-            else:
-                engine.dispose()
         finally:
-            reconciliation.close()
+            if engine is not None and not saved_knowledge:
+                engine.dispose()
     report = {
         'created_at': datetime.now(timezone.utc).isoformat(),
         'protocol': 'Read previously saved July knowledge; test August BIDV only; no training or knowledge writes during evaluation' if saved_knowledge else
@@ -257,7 +260,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
         'embedding_model': core.embedder.name, 'counts': dict(counts), 'truth_payers': payer_counts,
         'metrics': {name: metrics(c['tp'], c['fp'], c['fn']) for name, c in evaluations.items()},
         'duration_seconds': round(time.perf_counter() - start, 3),
-        'process_peak_rss_mb': round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
+        'process_peak_rss_mb': process_peak_rss_mb(),
         'examples': examples,
         'limitations': [
             'Training includes July confirmed labels only. August labels are never used for retrieval, reranking or knowledge updates.' if training_path or saved_knowledge else
@@ -363,7 +366,9 @@ def write_markdown(report, path):
              '|---|---:|---:|---:|---:|---:|---:|']
     for name, metric in report['metrics'].items():
         lines.append(f"| {name} | {percent(metric['precision'])} | {percent(metric['recall'])} | {percent(metric['f1'])} | {metric['true_positive']} | {metric['false_positive']} | {metric['false_negative']} |")
-    lines += ['', f"Duration: {report['duration_seconds']} seconds. Process peak RSS: {report['process_peak_rss_mb']} MB.", '',
+    peak_rss = report.get('process_peak_rss_mb')
+    peak_text = f'{peak_rss} MiB' if peak_rss is not None else 'N/A (not available on this platform)'
+    lines += ['', f"Duration: {report['duration_seconds']} seconds. Process peak RSS: {peak_text}.", '',
               '## Data counts', '', '```json', json.dumps(report['counts'], indent=2), '```', '', '## Limits and error analysis', '']
     lines += ['- ' + limit for limit in report['limitations']]
     if report.get('reporting_policy'):

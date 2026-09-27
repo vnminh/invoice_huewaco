@@ -590,9 +590,13 @@ class Core:
         learned = False
         if chosen:
             customer = session.get(Customer, chosen)
+            source = record.get('source', '')
+            if record.get('sheet'):
+                source += ' [' + record['sheet'] + ']'
             row = ExcelTransaction(record.get('row_index') or 0, record['raw'], date=date,
                 amount=record.get('amount', 0), payer=record.get('payer', 'BIDV'),
-                source=record.get('source', '') + ' (người dùng xác nhận)', label_status='confirmed')
+                reference=record.get('reference', ''), sheet=record.get('sheet', ''),
+                source=source + ' (người dùng xác nhận)', label_status='confirmed')
             self.learn(session, row, chosen, customer_name or customer.canonical_name, receipt_key=receipt_key)
             learned = True
         return {**record, 'confirmed_customer_id': chosen,
