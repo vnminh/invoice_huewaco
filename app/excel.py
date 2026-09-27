@@ -251,8 +251,10 @@ class StreamingWorkbook:
             self.zip = self.resources.enter_context(zipfile.ZipFile(self.path))
             if sum(i.file_size for i in self.zip.infolist()) > 2 * 1024**3:
                 raise ValueError('Workbook expands beyond the 2 GB limit')
-            self.temp = self.resources.enter_context(tempfile.TemporaryDirectory(prefix='invoice-xlsx-'))
-            self.db = self.resources.enter_context(closing(sqlite3.connect(str(Path(self.temp.name) / 'strings.db'))))
+            self.temp = tempfile.TemporaryDirectory(prefix='invoice-xlsx-')
+            # TemporaryDirectory.__enter__ returns a path string, not the manager.
+            self.temp_path = Path(self.resources.enter_context(self.temp))
+            self.db = self.resources.enter_context(closing(sqlite3.connect(str(self.temp_path / 'strings.db'))))
             self.db.execute('PRAGMA cache_size=-2048')
             self.db.execute('CREATE TABLE strings (id INTEGER PRIMARY KEY, value TEXT)')
             if 'xl/sharedStrings.xml' in self.zip.namelist():
