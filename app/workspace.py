@@ -125,6 +125,40 @@ class WorkingFiles:
             self.locations.update({int(key): (job_id, entry['offset'], entry['decision'], entry['status']) for key, entry in additions.items()})
             return list(map(int, additions))
 
+    def append_row_error(self, job_id, issue):
+        with self.lock:
+            path = self.root / job_id / 'row-errors.jsonl'
+            with path.open('ab') as output:
+                output.write((json.dumps(issue, ensure_ascii=False) + '\n').encode('utf-8'))
+                output.flush()
+                os.fsync(output.fileno())
+            summary = deepcopy(self.jobs[job_id]['summary'])
+            summary['row_error_count'] = summary.get('row_error_count', 0) + 1
+            samples = summary.setdefault('row_errors', [])
+            if len(samples) < 50:
+                samples.append(issue)
+            counts = summary.setdefault('error_sheet_counts', {})
+            counts[issue['sheet']] = counts.get(issue['sheet'], 0) + 1
+            self.update_job(job_id, summary=summary)
+
+    def row_errors(self, job_id):
+        # Snapshot length; close the handle before yielding, including on Windows.
+        with self.lock:
+            path = self.root / job_id / 'row-errors.jsonl'
+            size = path.stat().st_size if path.exists() else 0
+        offset = 0
+        while offset < size:
+            with self.lock:
+                if not path.exists():
+                    return
+                with path.open('rb') as source:
+                    source.seek(offset)
+                    line = source.readline()
+                    offset = source.tell()
+            if not line:
+                return
+            yield json.loads(line)
+
     def row(self, row_id):
         with self.lock:
             location = self.locations.get(int(row_id))

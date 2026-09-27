@@ -43,6 +43,12 @@ Sheet tổng hợp/hồ sơ khách hàng không có nội dung giao dịch và n
 
 Hai sheet có cùng số dòng Excel vẫn là hai giao dịch riêng. Kết quả hiển thị tên sheet; CSV kết quả giữ `sheet`, `payer`, `reference`, `debit`, `validation_errors`, `input_file` bên cạnh các cột có sẵn. Cột nguồn mẫu lịch sử và tệp đầu vào là hai thông tin riêng.
 
+Chân trang dạng `Telex:`, `Swift:`, `Website:`, `Contact center:`, `Trang 1 / 1` hoặc `Page 1 / 1` được bỏ qua khi không có tham chiếu, không có ô số tiền và không có ngày hợp lệ. Những dòng này là thông tin in sao kê, không phải giao dịch. Dòng có bằng chứng giao dịch vẫn được giữ để xử lý/kiểm tra thủ công.
+
+Nếu một dòng phát sinh lỗi khi đọc/chuyển đổi hoặc đối soát, hệ thống bỏ qua dòng đó và tiếp tục các dòng khác. Trong **Tác vụ xử lý**, mở **dòng lỗi đã bỏ qua** để xem sheet, số dòng và nguyên nhân; chọn **Tải danh sách dòng lỗi CSV** để lấy toàn bộ danh sách. Số dòng là số dòng trong tệp gốc, không phải ID giao dịch hoặc vị trí trong bảng kết quả. Nếu XML của Excel mất chỉ số dòng, báo cáo giữ vị trí bản ghi XML riêng, không tự đoán số dòng Excel.
+
+Những dòng vẫn đọc được nhưng ngày/số tiền/chiều giao dịch chưa rõ tiếp tục xuất hiện ở **kiểm tra thủ công 0%** như trước. Chỉ dòng thực sự phát sinh ngoại lệ mới bị bỏ qua. Lỗi toàn tệp (ZIP/XML hỏng, không nhận diện được bố cục), cấu hình kiến thức không phù hợp hoặc mất kết nối database vẫn dừng tác vụ.
+
 ### Xóa hiển thị và xóa tệp khác nhau
 
 **Xóa hiển thị** chỉ làm trống bảng trên màn hình. Tệp, các xác nhận và kiến thức vẫn được giữ. Tự làm mới tiến trình không làm bảng xuất hiện lại; bấm **Làm mới**, đổi bộ lọc hoặc bắt đầu tệp đối soát mới để xem kết quả.
@@ -99,6 +105,10 @@ Sửa tên khách hàng cập nhật cả tên chuẩn hóa và thông tin tìm 
 Chọn tệp đã lọc/đã xác nhận ở **Học dữ liệu mới**, đánh dấu đã kiểm tra nhãn rồi bấm **Nhập & học dữ liệu**. Hệ thống đọc mọi sheet có cột IDKH, gồm các kênh trả tiền có trong tệp. Bỏ qua `ko`; các nhãn chưa phân giải như `ht/pd/th` không trở thành hồ sơ khách hàng.
 
 Nhập được lưu theo từng đợt. Dừng nhập sẽ giữ những đợt đã hoàn tất và hủy đợt đang xử lý. Tải lại cùng tệp sẽ đọc lại tệp, bỏ qua những dòng đã học; không cần xóa kiến thức để tiếp tục.
+
+Mỗi dòng học có savepoint riêng. Nếu một dòng có dữ liệu không hợp lệ hoặc lỗi ràng buộc khi ghi PostgreSQL, các thay đổi của riêng dòng đó được rollback và báo vào danh sách lỗi; những dòng hợp lệ vẫn được commit theo đợt. Trạng thái **Hoàn tất · có dòng lỗi** có nghĩa tác vụ đã đọc xong, nhưng cần kiểm tra báo cáo trước khi xem tệp đã được học đầy đủ. Tệp từng có lỗi được phép nhập lại để thử các dòng lỗi; receipt ngăn học lại các dòng thành công. Sửa dữ liệu trong tệp nguồn rồi tải lại khi cần.
+
+CSV học cũng bỏ qua từng dòng có lỗi dữ liệu/mã hóa nội dung và báo số dòng vật lý trong CSV (có tính hàng tiêu đề). Lỗi cấu trúc CSV hoặc mã hóa của cả tệp có thể khiến việc đọc tiếp không an toàn và vẫn dừng tác vụ.
 
 ### CSV đã học
 

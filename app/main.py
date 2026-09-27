@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import String, cast, delete, func, or_, select, text, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 
 from .benchmark import run_benchmark, safe_csv
 from .core import Core, id_key, learning_receipt, posting_in, text_tokens
@@ -27,6 +27,7 @@ from .excel import ExcelTransaction, StreamingWorkbook
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
 from .platform_utils import portable_filename
+from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
 from .workspace import WorkingFiles
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,12 +154,15 @@ def create_app(engine=None, core=None, runtime_dir=None):
             return result
 
     def worker(job_id, path, kind, batch_size=1000, cutoff='2026-07-22', remove_file=False):
+        row_errors = RowErrors(lambda issue: working.append_row_error(job_id, issue),
+                               file=Path(path).name if path else '')
         def check_cancel():
             control = controls.get(job_id)
             if control and control['event'].is_set():
                 raise ImportCancelled()
         def progress(counts):
-            working.update_job(job_id, progress=counts.get('processed', counts.get('heldout_rows', counts.get('training_rows', 0))), summary=counts)
+            working.update_job(job_id, progress=counts.get('processed', counts.get('heldout_rows', counts.get('training_rows', 0))),
+                               summary={**counts, **row_errors.summary()})
         try:
             with job_lock:
                 check_cancel()
@@ -168,7 +172,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                         progress, knowledge_engine=engine, core=core)
                 total = summary['counts']['heldout_rows']
             elif kind == 'knowledge_import':
-                summary = import_confirmed(engine, core, path, batch_size, progress, check_cancel=check_cancel)
+                summary = import_confirmed(engine, core, path, batch_size, progress, check_cancel=check_cancel,
+                                           row_errors=row_errors)
                 total = summary['counts'].get('processed', 0)
             elif kind == 'review_recovery':
                 total = 0
@@ -180,7 +185,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                 summary = {'processed': total}
             else:
                 total, decisions = 0, {}
-                with StreamingWorkbook(path, check_cancel=check_cancel) as workbook:
+                with StreamingWorkbook(path, check_cancel=check_cancel, row_errors=row_errors) as workbook:
                     sheets = workbook.raw_sheets()
                     skipped_sheets = workbook.skipped_sheets('raw')
                     sheet_counts = {sheet: 0 for sheet in sheets}
@@ -190,27 +195,34 @@ def create_app(engine=None, core=None, runtime_dir=None):
                         raise ValueError('No supported bank transaction sheets found')
                     for batch in workbook.batches(kind='raw', batch_size=batch_size):
                         check_cancel()
-                        for start in range(0, len(batch), 32):
-                            check_cancel()
-                            core.prepare_batch([row.raw for row in batch[start:start + 32]
-                                                if not row.validation_errors and row.debit == 0 and row.amount > 0])
+                        failed = prepare_rows(core, [row for row in batch
+                            if not row.validation_errors and row.debit == 0 and row.amount > 0],
+                            row_errors, check_cancel)
                         results = []
                         with factory.begin() as session:
                             if engine.dialect.name == 'postgresql':
                                 session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
+                            core.check_model(session)
                             for row in batch:
                                 check_cancel()
                                 if row.customer_id:
                                     raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
-                                if row.validation_errors:
-                                    result = {'decision': 'manual_check', 'score': 0, 'customer_id': None, 'customer_name': None,
-                                        'normalization': core.normalize(row.raw).dict(), 'alternatives': [],
-                                        'evidence': {'reason': 'Uncertain bank transaction fields', 'reason_vi': ' '.join(row.validation_errors)}}
-                                elif row.debit > 0 or row.amount <= 0:
-                                    result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
-                                        'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
-                                else:
-                                    result = core.classify(session, row.raw, row.payer)
+                                if id(row) in failed:
+                                    continue
+                                try:
+                                    with session.begin_nested():
+                                        if row.validation_errors:
+                                            result = {'decision': 'manual_check', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                                'normalization': core.normalize(row.raw).dict(), 'alternatives': [],
+                                                'evidence': {'reason': 'Uncertain bank transaction fields', 'reason_vi': ' '.join(row.validation_errors)}}
+                                        elif row.debit > 0 or row.amount <= 0:
+                                            result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                                'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
+                                        else:
+                                            result = core.classify(session, row.raw, row.payer)
+                                except (*ROW_DATA_ERRORS, DataError, IntegrityError) as error:
+                                    row_errors.record(row.sheet, row.row_index, error, stage='classify')
+                                    continue
                                 results.append({**result, 'raw': row.raw, 'payer': row.payer, 'source': Path(path).name,
                                     'sheet': row.sheet, 'reference': row.reference, 'debit': row.debit,
                                     'validation_errors': row.validation_errors, 'row_index': row.row_index,
@@ -226,12 +238,12 @@ def create_app(engine=None, core=None, runtime_dir=None):
                 summary = {'processed': total, 'decisions': decisions, 'sheets': sheets,
                            'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets}
             with job_lock:
-                working.update_job(job_id, status='completed', summary=summary, progress=total)
+                working.update_job(job_id, status='completed', summary={**summary, **row_errors.summary()}, progress=total)
         except ImportCancelled as stopped:
             with job_lock:
                 values = {'status': 'cancelled', 'error': None}
                 if stopped.summary:
-                    values.update(summary=stopped.summary, progress=stopped.summary.get('counts', {}).get('processed', 0))
+                    values.update(summary={**stopped.summary, **row_errors.summary()}, progress=stopped.summary.get('counts', {}).get('processed', 0))
                 working.update_job(job_id, **values)
         except Exception as error:
             with job_lock:
@@ -644,6 +656,25 @@ def create_app(engine=None, core=None, runtime_dir=None):
     @api.get('/jobs/{job_id}')
     def get_job(job_id: uuid.UUID):
         return job_record(str(job_id))
+
+    @api.get('/jobs/{job_id}/errors.csv')
+    def export_row_errors(job_id: uuid.UUID):
+        job_record(str(job_id))
+        def stream():
+            yield '\ufeff'
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(['TEP', 'SHEET', 'DONG', 'VI_TRI_XML', 'GIAI_DOAN', 'LOI'])
+            yield buffer.getvalue()
+            for issue in working.row_errors(str(job_id)):
+                buffer.seek(0)
+                buffer.truncate(0)
+                writer.writerow([safe_csv(issue.get('file')), safe_csv(issue.get('sheet')),
+                    issue.get('row_index'), issue.get('row_position'), safe_csv(issue.get('stage')),
+                    safe_csv(issue.get('error'))])
+                yield buffer.getvalue()
+        return StreamingResponse(stream(), media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="row-errors-{job_id}.csv"'})
 
     @api.post('/jobs/{job_id}/cancel')
     def cancel_job(job_id: uuid.UUID):
