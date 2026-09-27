@@ -98,6 +98,7 @@ runtime/working/
   <job-uuid>/
     job.json                   # tệp nguồn, trạng thái, tiến trình
     results.jsonl              # kết quả/bằng chứng tại lúc lọc
+    row-errors.jsonl           # toàn bộ dòng lỗi: sheet, số dòng, bước và nguyên nhân
     index.json                 # offset, quyết định, trạng thái từng dòng
     reviews/<row-id>.json      # trạng thái duyệt và khách hàng xác nhận
     intents/<row-id>.json      # xác nhận đang chờ hoàn tất
@@ -114,6 +115,8 @@ Payload JSONL đọc từng dòng, chỉ giữ offset/trạng thái nhỏ trong 
 | reports/ | Báo cáo phát triển, không đưa vào UI người dùng. |
 
 Trình đọc XLSX có SQLite tạm cho shared strings để không nạp cả workbook; không thay PostgreSQL hoặc lưu lịch sử lọc.
+
+Danh sách lỗi từng dòng nằm trong working files và có CSV tải từ Tác vụ xử lý. Job JSON chỉ giữ tổng số và tối đa 50 lỗi đầu, giao diện hiển thị tối đa 20; CSV chứa mọi lỗi đã ghi, nên không giữ toàn bộ báo cáo trong RAM. PostgreSQL chỉ giữ số lỗi tổng hợp trong metadata lần nhập kiến thức, không lưu danh sách số dòng/nguyên nhân. Xóa tệp làm việc cũng xóa báo cáo lỗi; tải CSV trước nếu cần giữ.
 
 ## Gián đoạn và phục hồi
 

@@ -80,6 +80,8 @@ Giới hạn upload 100 MB, XLSX giải nén tối đa 2 GB; đọc streaming, c
 
 Đối soát quét mọi sheet, nhận diện cột theo tiêu đề của từng bố cục; không cố định BIDV. CSV kết quả/đã học giữ sheet, ngân hàng/kênh và tham chiếu. Tác vụ hiển thị số dòng từng sheet và sheet chưa nhận diện được. Các dòng chưa rõ chiều ghi có/ghi nợ được đưa về kiểm tra thủ công 0%; xem chi tiết bố cục trong hướng dẫn quản trị.
 
+Lỗi riêng một dòng khi đọc Excel/CSV, học hoặc đối soát được ghi theo sheet/số dòng và bỏ qua để tiếp tục. Tác vụ báo số dòng lỗi, cho xem nguyên nhân và tải toàn bộ danh sách CSV. Mỗi dòng học dùng savepoint để rollback riêng; lỗi toàn tệp, cấu hình hoặc mất kết nối vẫn dừng. Báo cáo dòng lỗi lưu ngoài PostgreSQL cùng working files.
+
 ## Thử nghiệm dành cho phát triển
 
 File theo tháng chỉ là fixture; không có nút học/thử file mẫu trên UI. Để tái lập ca **học mọi sheet tháng 7, đánh giá BIDV tháng 8**, dùng kho thử nghiệm riêng đã được khởi tạo:
