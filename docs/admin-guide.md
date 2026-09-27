@@ -41,6 +41,8 @@ Sheet Sacombank không có hàng tiêu đề trong tệp mẫu được đọc t
 
 Sheet tổng hợp/hồ sơ khách hàng không có nội dung giao dịch và ngày/số tiền phù hợp không được tự chuyển thành giao dịch. Danh sách sheet chưa xử lý và lý do xuất hiện tại **Tác vụ xử lý**, cùng số dòng từng sheet. Không tìm thấy sheet phù hợp sẽ báo lỗi. Dữ liệu có số tiền/ngày không đọc được hoặc chưa rõ chiều ghi có/ghi nợ cần kiểm tra thủ công, không tự ghép.
 
+Đối soát xử lý lần lượt từng sheet và cập nhật kết quả sau mỗi nhóm tối đa 32 dòng (hoặc nhỏ hơn nếu batch_size được đặt nhỏ hơn). Tác vụ hiển thị sheet/số dòng đang đối soát ngay trước khi xử lý nhóm. Số đã xử lý chỉ tăng khi kết quả đã lưu, nên có thể vẫn là 0 trong lúc xử lý nhóm đầu; các sheet chưa đến lượt hiển thị **Chưa có kết quả**. Sheet bị bỏ qua được báo riêng, không có nghĩa cả tác vụ bị lỗi.
+
 Hai sheet có cùng số dòng Excel vẫn là hai giao dịch riêng. Kết quả hiển thị tên sheet; CSV kết quả giữ `sheet`, `payer`, `reference`, `debit`, `validation_errors`, `input_file` bên cạnh các cột có sẵn. Cột nguồn mẫu lịch sử và tệp đầu vào là hai thông tin riêng.
 
 Chân trang dạng `Telex:`, `Swift:`, `Website:`, `Contact center:`, `Trang 1 / 1` hoặc `Page 1 / 1` được bỏ qua khi không có tham chiếu, không có ô số tiền và không có ngày hợp lệ. Những dòng này là thông tin in sao kê, không phải giao dịch. Dòng có bằng chứng giao dịch vẫn được giữ để xử lý/kiểm tra thủ công.

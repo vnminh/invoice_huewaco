@@ -185,56 +185,64 @@ def create_app(engine=None, core=None, runtime_dir=None):
                 summary = {'processed': total}
             else:
                 total, decisions = 0, {}
+                progress({'processed': 0, 'decisions': decisions, 'phase': 'reading'})
                 with StreamingWorkbook(path, check_cancel=check_cancel, row_errors=row_errors) as workbook:
                     sheets = workbook.raw_sheets()
                     skipped_sheets = workbook.skipped_sheets('raw')
                     sheet_counts = {sheet: 0 for sheet in sheets}
                     progress({'processed': 0, 'decisions': decisions, 'sheets': sheets,
-                              'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets})
+                              'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets, 'phase': 'reading'})
                     if not sheets:
                         raise ValueError('No supported bank transaction sheets found')
-                    for batch in workbook.batches(kind='raw', batch_size=batch_size):
-                        check_cancel()
-                        failed = prepare_rows(core, [row for row in batch
-                            if not row.validation_errors and row.debit == 0 and row.amount > 0],
-                            row_errors, check_cancel)
-                        results = []
-                        with factory.begin() as session:
-                            if engine.dialect.name == 'postgresql':
-                                session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
-                            core.check_model(session)
-                            for row in batch:
-                                check_cancel()
-                                if row.customer_id:
-                                    raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
-                                if id(row) in failed:
-                                    continue
-                                try:
-                                    with session.begin_nested():
-                                        if row.validation_errors:
-                                            result = {'decision': 'manual_check', 'score': 0, 'customer_id': None, 'customer_name': None,
-                                                'normalization': core.normalize(row.raw).dict(), 'alternatives': [],
-                                                'evidence': {'reason': 'Uncertain bank transaction fields', 'reason_vi': ' '.join(row.validation_errors)}}
-                                        elif row.debit > 0 or row.amount <= 0:
-                                            result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
-                                                'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
-                                        else:
-                                            result = core.classify(session, row.raw, row.payer)
-                                except (*ROW_DATA_ERRORS, DataError, IntegrityError) as error:
-                                    row_errors.record(row.sheet, row.row_index, error, stage='classify')
-                                    continue
-                                results.append({**result, 'raw': row.raw, 'payer': row.payer, 'source': Path(path).name,
-                                    'sheet': row.sheet, 'reference': row.reference, 'debit': row.debit,
-                                    'validation_errors': row.validation_errors, 'row_index': row.row_index,
-                                    'date': row.date, 'amount': row.amount})
-                        check_cancel()
-                        working.append(job_id, results)
-                        for result in results:
-                            decisions[result['decision']] = decisions.get(result['decision'], 0) + 1
-                            sheet_counts[result['sheet']] += 1
-                        total += len(results)
-                        progress({'processed': total, 'decisions': decisions, 'sheets': sheets,
-                                  'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets})
+                    # Publish small groups per sheet, instead of showing zero throughout
+                    # preparation and matching of a 1,000-row batch across multiple sheets.
+                    for sheet in sheets:
+                        for batch in workbook.batches(sheet=sheet, kind='raw', batch_size=min(batch_size, 32)):
+                            check_cancel()
+                            progress({'processed': total, 'decisions': decisions, 'sheets': sheets,
+                                      'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets,
+                                      'phase': 'classifying', 'current_sheet': sheet, 'current_row': batch[0].row_index})
+                            failed = prepare_rows(core, [row for row in batch
+                                if not row.validation_errors and row.debit == 0 and row.amount > 0],
+                                row_errors, check_cancel)
+                            results = []
+                            with factory.begin() as session:
+                                if engine.dialect.name == 'postgresql':
+                                    session.execute(text('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'))
+                                core.check_model(session)
+                                for row in batch:
+                                    check_cancel()
+                                    if row.customer_id:
+                                        raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
+                                    if id(row) in failed:
+                                        continue
+                                    try:
+                                        with session.begin_nested():
+                                            if row.validation_errors:
+                                                result = {'decision': 'manual_check', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                                    'normalization': core.normalize(row.raw).dict(), 'alternatives': [],
+                                                    'evidence': {'reason': 'Uncertain bank transaction fields', 'reason_vi': ' '.join(row.validation_errors)}}
+                                            elif row.debit > 0 or row.amount <= 0:
+                                                result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
+                                                    'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
+                                            else:
+                                                result = core.classify(session, row.raw, row.payer)
+                                    except (*ROW_DATA_ERRORS, DataError, IntegrityError) as error:
+                                        row_errors.record(row.sheet, row.row_index, error, stage='classify')
+                                        continue
+                                    results.append({**result, 'raw': row.raw, 'payer': row.payer, 'source': Path(path).name,
+                                        'sheet': row.sheet, 'reference': row.reference, 'debit': row.debit,
+                                        'validation_errors': row.validation_errors, 'row_index': row.row_index,
+                                        'date': row.date, 'amount': row.amount})
+                            check_cancel()
+                            working.append(job_id, results)
+                            for result in results:
+                                decisions[result['decision']] = decisions.get(result['decision'], 0) + 1
+                                sheet_counts[result['sheet']] += 1
+                            total += len(results)
+                            progress({'processed': total, 'decisions': decisions, 'sheets': sheets,
+                                      'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets,
+                                      'phase': 'classifying', 'current_sheet': sheet, 'current_row': batch[-1].row_index})
                 summary = {'processed': total, 'decisions': decisions, 'sheets': sheets,
                            'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets}
             with job_lock:
