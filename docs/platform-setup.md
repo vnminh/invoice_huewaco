@@ -68,6 +68,8 @@ Tên tệp upload giữ tiếng Việt; ký tự Windows không cho phép hoặc
 
 Cache SQLite đóng connection sau mỗi lần truy cập. Trình đọc Excel đăng ký và đóng các stream ZIP, connection SQLite trước khi dọn thư mục tạm, kể cả khi lỗi hoặc dừng giữa chừng. Harness benchmark cũng đóng connection/engine tạm trước khi xóa thư mục. PostgreSQL vẫn là kho kiến thức; SQLite chỉ là cache/file tạm hoặc fixture phát triển.
 
+Thư mục tạm được Python tự tạo theo cấu hình hệ điều hành, không cố định `/tmp`. Trình đọc Excel giữ riêng đối tượng `TemporaryDirectory` để quản lý dọn dẹp và đường dẫn `Path` để mở SQLite: giá trị trả về khi vào context là chuỗi đường dẫn, không phải đối tượng có thuộc tính `.name`. Bạn không cần tạo thư mục temp thủ công cho lỗi này.
+
 ## Ghi working files
 
 Trên cả hai hệ điều hành, file JSON được ghi vào file tạm cùng thư mục, flush/fsync file, đóng handle rồi `os.replace` sang tên chính. File JSONL cũng flush/fsync trước khi cập nhật chỉ mục.
