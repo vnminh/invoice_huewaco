@@ -13,6 +13,7 @@ import uuid
 
 from .db import now
 from .normalize import fold
+from .platform_utils import sync_directory
 
 
 class WorkingFiles:
@@ -55,11 +56,7 @@ class WorkingFiles:
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary, path)
-            directory = os.open(path.parent, os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            sync_directory(path.parent)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -74,11 +71,7 @@ class WorkingFiles:
         if not path.exists():
             return
         path.unlink()
-        directory = os.open(path.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        sync_directory(path.parent)
 
     def create_job(self, kind, filename=''):
         with self.lock:
@@ -169,7 +162,8 @@ class WorkingFiles:
             if decision and row['decision'] != decision or status and row['status'] != status:
                 continue
             if q and fold(q) not in fold(' '.join(str(row.get(key) or '') for key in
-                       ('raw', 'customer_id', 'customer_name', 'confirmed_customer_id', 'confirmed_customer_name'))):
+                       ('raw', 'customer_id', 'customer_name', 'confirmed_customer_id', 'confirmed_customer_name',
+                        'sheet', 'payer', 'reference', 'source'))):
                 continue
             if offset <= total < offset + limit:
                 items.append(row)

@@ -45,13 +45,14 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             record.value = json.dumps(summary)
         else:
             session.add(Metadata(key=key, value=json.dumps(summary)))
-    sheets = []
+    sheets, skipped_sheets, sheet_counts = [], [], Counter()
     try:
         check_cancel()
         is_csv = Path(path).suffix.lower() == '.csv'
         reader = ConfirmedCsv if is_csv else StreamingWorkbook
         with reader(path, check_cancel=check_cancel) as workbook:
             sheets = workbook.confirmed_sheets()
+            skipped_sheets = [] if is_csv else workbook.skipped_sheets('confirmed')
             if not sheets:
                 raise ValueError('Knowledge workbook needs labeled sheets with an IDKH header')
             for sheet in sheets:
@@ -84,19 +85,22 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                             batch_counts['learned'] += int(core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt))
                         check_cancel()
                     counts.update(batch_counts)
+                    sheet_counts[sheet] += batch_counts['processed']
                     payers.update(batch_payers)
                     periods.update(batch_periods)
                     if progress:
-                        progress(dict(counts))
+                        progress({**dict(counts), 'sheet_counts': dict(sheet_counts), 'skipped_sheets': skipped_sheets})
         check_cancel()
     except ImportCancelled:
-        summary.update(status='cancelled', sheets=sheets, periods=sorted(periods), payers=dict(payers),
+        summary.update(status='cancelled', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
+                       periods=sorted(periods), payers=dict(payers),
                        feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
                        counts=dict(counts))
         with factory.begin() as session:
             session.get(Metadata, key).value = json.dumps(summary, ensure_ascii=False)
         raise ImportCancelled(summary) from None
-    summary.update(status='completed', sheets=sheets, periods=sorted(periods), payers=dict(payers),
+    summary.update(status='completed', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
+                   periods=sorted(periods), payers=dict(payers),
                    feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
                    counts=dict(counts))
     with factory.begin() as session:

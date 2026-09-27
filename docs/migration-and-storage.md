@@ -5,7 +5,7 @@
 Cài pgvector trên PostgreSQL 15+ trước. Tạo login/database nếu chưa có bằng tài khoản quản trị; thay mật khẩu mẫu:
 
 ```sql
-CREATE USER invoice_app WITH PASSWORD 'change_me';
+CREATE USER invoice_app WITH PASSWORD '123456';
 CREATE DATABASE invoice_filter OWNER invoice_app;
 ```
 
@@ -18,6 +18,14 @@ sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/create_current.
 `sql/create_current.sql` tạo thẳng schema hiện tại gồm 10 bảng kiến thức, kiểu TEXT cho giá trị số/token, digest và đầy đủ chỉ mục. Với database mới, **chỉ chạy file này**, không chạy init → 001 → 002. File không xóa dữ liệu hoặc nâng cấp cấu trúc bảng cũ.
 
 Dùng `<` để shell của bạn đọc file; tiến trình postgres không phải mở file trong thư mục home riêng. Không chạy từ shell postgres nếu tài khoản đó không đọc được project. `-p` cần số port, ví dụ `-p 5432`.
+
+Trên **Windows (PowerShell)**, dùng kết nối TCP và `-f`, không dùng `sudo` hoặc `<`:
+
+```powershell
+psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "sql/create_current.sql"
+```
+
+Nếu `psql` chưa có trong PATH, dùng `& "C:\Program Files\PostgreSQL\16\bin\psql.exe"` thay cho `psql` (đổi `16` theo bản cài). File SQL vẫn do bạn tự chạy; PostgreSQL trên Windows cũng cần pgvector cài sẵn. Xem [hướng dẫn hai hệ điều hành](platform-setup.md).
 
 File tự cấp quyền cho login `invoice_app` nếu login đã tồn tại. Nếu dùng login khác, administrator cần cấp quyền tương ứng trong database invoice_filter (thay tên login ở các lệnh):
 
@@ -38,13 +46,16 @@ psql -U invoice_app -h 127.0.0.1 -p 5432 -d invoice_filter
 **Migration 002 xóa các bảng và dữ liệu transactions, feedback, jobs cũ; giữ kho kiến thức.** Chỉ chạy sau khi đã xuất dữ liệu cũ cần giữ. Backend không tự chạy migration.
 
 1. Dừng backend để dữ liệu không đổi khi xuất/migrate.
-2. Từ terminal của bạn, tải biến môi trường và xuất kết quả cũ:
+2. Từ thư mục project, xuất kết quả cũ; script tự đọc `.env`:
 
    ```bash
-   set -a
-   source .env
-   set +a
    .venv/bin/python scripts/archive_legacy_results.py --output runtime/legacy-export-before-002
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts/archive_legacy_results.py --output runtime/legacy-export-before-002
    ```
 
    Script chỉ đọc PostgreSQL, không học/xóa. Nó xuất transactions.csv, feedback.csv, jobs.csv nếu bảng tồn tại và **confirmed_learning.csv** cho các dòng đã xác nhận nhưng chưa học. Thư mục xuất phải mới để tránh ghi đè. Giữ CSV trước bước tiếp theo; có thể dùng thêm pg_dump nếu cần sao lưu toàn database.
@@ -55,13 +66,21 @@ psql -U invoice_app -h 127.0.0.1 -p 5432 -d invoice_filter
    sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/migrations/002_knowledge_only.sql
    ```
 
+   Windows PowerShell (chỉ sau khi đã xuất/sao lưu dữ liệu cũ):
+
+   ```powershell
+   psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "sql/migrations/002_knowledge_only.sql"
+   ```
+
    Đã bao gồm đổi numeric_value/token thành TEXT; không cần chạy 001 riêng. Script backfill digest, đổi chỉ mục rồi bỏ ba bảng tạm. SHA-256 dùng [hàm có sẵn PostgreSQL](https://www.postgresql.org/docs/16/functions-binarystring.html). Toàn bộ trong transaction, lỗi sẽ không commit; không CASCADE để tránh xóa phụ thuộc ngoài phạm vi.
 
 4. Khởi động backend mới, một worker:
 
    ```bash
-   .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+   .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
    ```
+
+   Windows: `.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`.
 
 5. Nếu confirmed_learning.csv có dữ liệu, vào **Học dữ liệu mới**, tải CSV đó và xác nhận nguồn đã duyệt để học các dòng còn chờ của phiên bản cũ.
 
@@ -84,7 +103,7 @@ runtime/working/
     intents/<row-id>.json      # xác nhận đang chờ hoàn tất
 ```
 
-Payload JSONL đọc từng dòng, chỉ giữ offset/trạng thái nhỏ trong bộ nhớ. Chỉ mục vẫn tăng theo số dòng, nên bộ nhớ không hoàn toàn độc lập với kích thước dữ liệu. Ghi JSON thay thế nguyên tử/fsync; append xong mới cập nhật index.
+Payload JSONL đọc từng dòng, chỉ giữ offset/trạng thái nhỏ trong bộ nhớ. Chỉ mục vẫn tăng theo số dòng, nên bộ nhớ không hoàn toàn độc lập với kích thước dữ liệu. Ghi JSON bằng flush/fsync file rồi thay thế nguyên tử; append xong mới cập nhật index. Linux đồng bộ thêm metadata thư mục khi filesystem hỗ trợ; Windows bỏ bước fsync thư mục vì Python không hỗ trợ `O_DIRECTORY` ở đây. Mức bảo đảm metadata khi mất điện phụ thuộc nền tảng/filesystem; xem [khác biệt nền tảng](platform-setup.md).
 
 | Tệp/thư mục | Mục đích |
 | --- | --- |

@@ -21,12 +21,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     model = Embedder(model=args.model)
     core = Core(embedder=model)
-    engine = make_engine('sqlite:///' + str(Path(args.fixture).resolve()))
+    engine = make_engine('sqlite:///' + Path(args.fixture).resolve().as_posix())
     Base.metadata.create_all(engine)
     def progress(counts): print(counts, flush=True)
     print(import_confirmed(engine, core, 'Data/Ngan hang thang 7-2026 FN.xlsx', progress=progress), flush=True)
     engine.dispose()
-    engine = make_engine('sqlite:///' + str(Path(args.fixture).resolve()))
+    engine = make_engine('sqlite:///' + Path(args.fixture).resolve().as_posix())
     try:
         report = run_benchmark('Data/Ngan hang thang 08.2026.xlsx', 'Data/Ngan hang thang 8-2026 FN.xlsx',
                                args.output, knowledge_engine=engine, core=core, progress=progress)
