@@ -13,6 +13,7 @@ import uuid
 
 from .db import now
 from .normalize import fold
+from .payment_period import with_payment_period
 from .platform_utils import sync_directory
 
 
@@ -112,6 +113,7 @@ class WorkingFiles:
             additions = {}
             with (folder / 'results.jsonl').open('ab') as output:
                 for row_id, record in enumerate(records, start=first):
+                    record = with_payment_period(record)
                     entry = {**record, 'id': row_id, 'job_id': job_id,
                              'entry_key': self.state['namespace'] + ':' + str(row_id),
                              'created_at': now(), 'status': 'pending', 'learned': False,
@@ -170,7 +172,8 @@ class WorkingFiles:
             with (folder / 'results.jsonl').open('rb') as source:
                 source.seek(offset)
                 original = json.loads(source.readline())
-            return {**original, **self._read(overlay)} if overlay.exists() else original
+            record = {**original, **self._read(overlay)} if overlay.exists() else original
+            return with_payment_period(record)
 
     def rows(self, job_id=None, reverse=False):
         # Take only index keys; read one payload at a time and release the lock between reads.
@@ -197,7 +200,7 @@ class WorkingFiles:
                 continue
             if q and fold(q) not in fold(' '.join(str(row.get(key) or '') for key in
                        ('raw', 'customer_id', 'customer_name', 'confirmed_customer_id', 'confirmed_customer_name',
-                        'sheet', 'payer', 'reference', 'source'))):
+                        'sheet', 'payer', 'reference', 'source', 'payment_period'))):
                 continue
             if offset <= total < offset + limit:
                 items.append(row)

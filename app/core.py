@@ -14,6 +14,7 @@ from .db import (Alias, Customer, HardNegative, KnowledgeReceipt, Metadata,
 from .embedding import Embedder, cosine, vector_buckets
 from .normalize import fold, normalize_text, identity_signature, branch_markers, RuleExtractor
 from .numeric_match import compare_ordered_numbers
+from .retrieval import CHANNEL_LABELS, fuse_rankings
 
 WEIGHTS = {'customer': .30, 'payer': .10, 'text': .20, 'structure': .15, 'number': .15, 'history': .10}
 STOPWORDS = set('rem tfr ac o l tt tien nuoc thoi gian gd thanh toan chuyen khoan the tai va cua cho tu den vnd cty cong ty co phan'.split())
@@ -42,6 +43,10 @@ def vietnamese_reason(reason):
         'Conflicting contract or identifier order blocks acceptance': 'Mã hợp đồng hoặc thứ tự mã định danh khác mẫu lịch sử; không chấp nhận ghép.',
         'Unique payer with semantic and exact structured evidence': 'Người trả tiền duy nhất trong lịch sử, kèm nội dung tương đồng và số/vị trí đã kiểm tra chính xác.',
         'Unique exact mixed code and ordered identity evidence': 'Mã chữ/số trùng chính xác, chỉ gắn với một khách hàng trong lịch sử; toàn bộ số định danh khớp đúng thứ tự.',
+        'Customer ID maps to multiple confirmed profiles; manual check required': 'Mã khách hàng ánh xạ tới nhiều hồ sơ đã xác nhận; cần kiểm tra thủ công.',
+        'Conflicting confirmed identifiers require manual check': 'Các mã đã xác nhận trong giao dịch chỉ tới những khách hàng khác nhau; cần kiểm tra thủ công.',
+        'Unmatched or reordered customer-specific codes require manual check': 'Mã chữ/số hoặc số cơ sở chưa khớp đầy đủ theo đúng thứ tự với mẫu lịch sử; cần kiểm tra thủ công.',
+        'Unmatched confirmed customer number requires manual check': 'Số từng được xác nhận là mã khách hàng bị thiếu, đổi giá trị hoặc đổi vị trí so với mẫu lịch sử; cần kiểm tra thủ công.',
     }
     suffix = '; competing customer requires human review'
     base = reason.removesuffix(suffix)
@@ -59,6 +64,16 @@ def posting_in(values):
 
 def posting_equal(value):
     return posting_in([value])
+
+
+def posting_owners(session, tokens):
+    """Read ownership across the entire knowledge, independently of candidate limits."""
+    owners = defaultdict(set)
+    if tokens:
+        for token, customer_id in session.execute(select(Posting.token, Pattern.customer_id)
+                .join(Pattern, Pattern.id == Posting.pattern_id).where(posting_in(tokens)).distinct()):
+            owners[token].add(customer_id)
+    return owners
 
 
 def id_key(value):
@@ -92,11 +107,17 @@ def learning_receipt(raw, customer_id, date='', amount=0, payer='BIDV'):
 
 
 class Core:
-    def __init__(self, embedder=None, candidate_limit=40, auto_threshold=.9, review_threshold=.6, extractor=None):
+    def __init__(self, embedder=None, candidate_limit=40, auto_threshold=.9, review_threshold=.6, extractor=None,
+                 match_margin=.08):
         self.embedder = embedder or Embedder()
         self.candidate_limit = candidate_limit
         self.auto_threshold = auto_threshold
         self.review_threshold = review_threshold
+        self.match_margin = match_margin
+        if not 1 <= candidate_limit <= 500:
+            raise ValueError('candidate_limit must be between 1 and 500')
+        if not 0 <= review_threshold < auto_threshold <= 1 or not 0 <= match_margin <= 1:
+            raise ValueError('Matching thresholds and margin must be valid values between 0 and 1')
         if extractor is not None and getattr(extractor, 'provider', 'rules') != 'rules':
             raise ValueError('Local LLM extraction is disabled; use semantic embeddings with deterministic identifiers')
         self.extractor = RuleExtractor()
@@ -127,10 +148,11 @@ class Core:
             raise ValueError('A confirmed customer ID is required')
         customer = session.get(Customer, customer_id)
         if not customer and customer_id.isdigit():
-            known_pattern = session.scalar(select(Pattern).join(Posting, Posting.pattern_id == Pattern.id)
-                                           .where(posting_equal('id:' + id_key(customer_id))).limit(1))
-            if known_pattern:
-                customer = session.get(Customer, known_pattern.customer_id)
+            known = posting_owners(session, {'id:' + id_key(customer_id)})['id:' + id_key(customer_id)]
+            if len(known) > 1:
+                raise ValueError('Mã khách hàng trùng nhiều hồ sơ; cần sửa các hồ sơ trùng trước khi học.')
+            if known:
+                customer = session.get(Customer, next(iter(known)))
         if not customer:
             name = str(customer_name or customer_id).strip()
             customer = Customer(id=customer_id, canonical_name=name, normalized_name=fold(name))
@@ -274,68 +296,130 @@ class Core:
                          for token, weight in tokens.items() if token not in existing])
         return True
 
-    def retrieve(self, session, norm, vector, payer):
+    def retrieve(self, session, norm, vector, payer, *, customer_scope=None, with_trace=False):
+        """Combine bounded search rankings; only an explicit known ID scopes the search."""
         limit = self.candidate_limit
-        # An explicit ID constrains the customer. Fetch only that customer's indexed
-        # historical patterns; broad template searches otherwise favor generic wires.
-        if norm.customer_ids:
-            known = select(Posting.pattern_id).where(posting_in({'id:' + id_key(value) for value in norm.customer_ids}))
-            identifiers = {'contract:' + value for value in norm.contract_ids} | {'code:' + value for value in norm.mixed_codes}
-            specific = select(Posting.pattern_id).where(posting_in(identifiers))
+        source_limit = min(500, max(32, limit * 3))
+        channels, candidate_customers = {}, {}
+        if norm.customer_ids and customer_scope is None:
+            owners = posting_owners(session, {'id:' + id_key(value) for value in norm.customer_ids})
+            known = set().union(*owners.values()) if owners else set()
+            if len(known) != 1:
+                empty, trace = fuse_rankings({}, {}, limit)
+                return (empty, trace) if with_trace else empty
+            customer_scope = next(iter(known))
+
+        def add_channel(name, rows):
+            channels[name] = []
+            counts = defaultdict(int)
+            for row in rows:
+                if not customer_scope and counts[row.customer_id] >= 4:
+                    continue
+                channels[name].append(row.id)
+                candidate_customers[row.id] = row.customer_id
+                counts[row.customer_id] += 1
+                if len(channels[name]) >= source_limit:
+                    break
+
+        def postings_channel(name, tokens):
+            if not tokens:
+                return
+            # Group BEFORE limiting: multiple matching tokens must not consume
+            # several candidate positions for the same historical pattern.
+            query = select(Pattern.id, Pattern.customer_id, func.sum(Posting.weight).label('score'),
+                           (Pattern.template_text == norm.template).label('template_match'),
+                           (Pattern.structure == norm.structure).label('structure_match'), Pattern.last_seen) \
+                .join(Posting, Posting.pattern_id == Pattern.id).where(posting_in(tokens))
+            if customer_scope:
+                query = query.where(Pattern.customer_id == customer_scope)
+            hits = query.group_by(Pattern.id, Pattern.customer_id, Pattern.template_text,
+                                  Pattern.structure, Pattern.last_seen).subquery()
+            order = (hits.c.score.desc(), hits.c.template_match.desc(), hits.c.structure_match.desc(),
+                     hits.c.last_seen.desc(), hits.c.id.desc())
+            if customer_scope:
+                query = select(hits.c.id, hits.c.customer_id).order_by(*order).limit(source_limit)
+            else:
+                diversified = select(hits, func.row_number().over(
+                    partition_by=hits.c.customer_id, order_by=order).label('customer_rank')).subquery()
+                query = select(diversified.c.id, diversified.c.customer_id).where(diversified.c.customer_rank <= 4) \
+                    .order_by(diversified.c.score.desc(), diversified.c.template_match.desc(),
+                              diversified.c.structure_match.desc(), diversified.c.last_seen.desc(),
+                              diversified.c.id.desc()).limit(source_limit)
+            add_channel(name, session.execute(query))
+
+        if customer_scope:
             literal_ids = select(Posting.pattern_id).where(posting_in({'n:' + value for value in norm.customer_ids}))
-            candidates = list(session.scalars(select(Pattern).where(Pattern.id.in_(known)).order_by(
-                Pattern.id.in_(specific).desc(), Pattern.id.in_(literal_ids).desc(), (Pattern.template_text == norm.template).desc(),
-                (Pattern.structure == norm.structure).desc(), Pattern.last_seen.desc(), Pattern.id.desc()).limit(limit)))
-            if candidates:
-                return candidates
+            add_channel('customer_id', session.execute(select(Pattern.id, Pattern.customer_id)
+                .where(Pattern.customer_id == customer_scope).order_by(
+                    (Pattern.normalized_text == norm.normalized).desc(),
+                    (Pattern.template_text == norm.template).desc(), (Pattern.structure == norm.structure).desc(),
+                    Pattern.id.in_(literal_ids).desc(), Pattern.last_seen.desc(), Pattern.id.desc()).limit(source_limit)))
+        postings_channel('exact_text', {'exact:' + fingerprint(norm.normalized)})
         identifying = {'contract:' + value for value in norm.contract_ids}
         identifying.update('bound-id:' + n['value'] for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER')
-        if identifying:
-            ids = list(session.scalars(select(Posting.pattern_id).where(posting_in(identifying))
-                                       .order_by(Posting.weight.desc(), Posting.pattern_id).limit(limit)))
-            if ids:
-                return list(session.scalars(select(Pattern).where(Pattern.id.in_(ids))))
-        # Specific account and payment details take precedence over generic bank text.
-        specific = {'payer:' + account for account in norm.payer_accounts}
-        specific.update('code:' + value for value in norm.mixed_codes)
-        specific.add('detail:' + fingerprint(identity_signature(norm.raw)))
-        specific_ids = list(session.scalars(select(Posting.pattern_id).where(posting_in(specific))
-                                          .order_by(Posting.weight.desc(), Posting.pattern_id).limit(limit)))
-        if specific_ids:
-            return list(session.scalars(select(Pattern).where(Pattern.id.in_(specific_ids))))
+        postings_channel('identity', identifying)
+        structured = {'code:' + value for value in norm.mixed_codes}
+        signature = identity_signature(norm.raw)
+        if signature:
+            structured.add('detail:' + fingerprint(signature))
+        postings_channel('structured', structured)
+        postings_channel('payer', {'payer:' + value for value in norm.payer_accounts})
         words = text_tokens(norm.normalized)
-        tokens = {'exact:' + fingerprint(norm.normalized)}
-        tokens.update('id:' + id_key(n) for n in norm.customer_ids)
-        tokens.update('w:' + word for word in words)
-        tokens.update('name:' + word for word in words)
-        tokens.update('payer:' + value for value in norm.payer_accounts)
-        tokens.update('n:' + n['value'] for n in norm.numbers if n['numeric_type'] in ('ACCOUNT_ID', 'CARD_ID', 'CUSTOMER_ID', 'CONTRACT_ID', 'MIXED_CODE', 'INVOICE_CODE'))
+        tokens = {'w:' + word for word in words} | {'name:' + word for word in words}
+        tokens.update('n:' + n['value'] for n in norm.numbers if n['numeric_type'] in (
+            'ACCOUNT_ID', 'CARD_ID', 'CUSTOMER_ID', 'CONTRACT_ID', 'MIXED_CODE', 'INVOICE_CODE'))
         tokens.update(vector_buckets(vector))
-        ranked = session.execute(select(Posting.pattern_id, func.sum(Posting.weight).label('score'))
-                                 .where(posting_in(tokens)).group_by(Posting.pattern_id)
-                                 .order_by(text('score DESC'), Posting.pattern_id).limit(limit)).all()
-        candidate_scores = {row.pattern_id: float(row.score) for row in ranked}
+        postings_channel('postings', tokens)
+
         if session.bind.dialect.name == 'postgresql':
             vector_text = '[' + ','.join(str(float(v)) for v in vector) + ']'
-            # Separate indexed searches, merged before any expensive reranking.
-            searches = [
-                ("SELECT id, 1 - (embedding <=> CAST(:vector AS vector)) AS score FROM transaction_patterns ORDER BY embedding <=> CAST(:vector AS vector) LIMIT :k", {'vector': vector_text, 'k': limit}),
-                ("SELECT id, ts_rank_cd(to_tsvector('simple', template_text), plainto_tsquery('simple', :query)) AS score FROM transaction_patterns WHERE to_tsvector('simple', template_text) @@ plainto_tsquery('simple', :query) ORDER BY score DESC LIMIT :k", {'query': ' '.join(words), 'k': limit}),
-                ("SELECT id, similarity(template_text, :query) AS score FROM transaction_patterns WHERE template_text % :query ORDER BY score DESC LIMIT :k", {'query': norm.template, 'k': limit}),
-                ("SELECT p.id, similarity(c.normalized_name, :query) AS score FROM customers c JOIN transaction_patterns p ON p.customer_id=c.id WHERE c.normalized_name % :query ORDER BY score DESC LIMIT :k", {'query': norm.normalized, 'k': limit}),
-            ]
-            for sql, parameters in searches:
-                for row in session.execute(text(sql), parameters):
-                    candidate_scores[row.id] = candidate_scores.get(row.id, 0) + float(row.score or 0)
-        ids = sorted(candidate_scores, key=lambda i: (-candidate_scores[i], i))[:limit]
-        ids = list(dict.fromkeys(specific_ids + ids))[:limit]
-        if not ids:
-            return []
-        return list(session.scalars(select(Pattern).where(Pattern.id.in_(ids))))
+            parameters = {'vector': vector_text, 'k': source_limit * 4, 'customer_id': customer_scope}
+            if customer_scope:
+                # Materialize the indexed customer scope before cosine ranking,
+                # so an ANN post-filter cannot miss this customer's older variants.
+                sql = ('WITH scoped AS MATERIALIZED (SELECT id, customer_id, embedding FROM transaction_patterns '
+                       'WHERE customer_id = :customer_id) SELECT id, customer_id FROM scoped '
+                       'ORDER BY embedding <=> CAST(:vector AS vector), id LIMIT :k')
+            else:
+                # Keep the distance/LIMIT form usable by the existing HNSW index.
+                sql = ('SELECT id, customer_id FROM transaction_patterns '
+                       'ORDER BY embedding <=> CAST(:vector AS vector) LIMIT :k')
+            add_channel('semantic', session.execute(text(sql), parameters))
+
+            scope_sql = ' AND p.customer_id = :customer_id' if customer_scope else ''
+            searches = []
+            if words:
+                # OR tolerates extra narrative words; exact identifiers are checked
+                # independently during reranking. Tokens contain only a-z letters.
+                searches.append(('full_text',
+                    "SELECT p.id, p.customer_id, ts_rank_cd(to_tsvector('simple', p.template_text), to_tsquery('simple', :query)) AS score "
+                    "FROM transaction_patterns p WHERE to_tsvector('simple', p.template_text) @@ to_tsquery('simple', :query)" + scope_sql,
+                    {'query': ' | '.join(sorted(words))}))
+            searches.extend([
+                ('trigram', 'SELECT p.id, p.customer_id, similarity(p.template_text, :query) AS score '
+                 'FROM transaction_patterns p WHERE p.template_text % :query' + scope_sql, {'query': norm.template}),
+                ('customer_name', 'SELECT p.id, p.customer_id, similarity(c.normalized_name, :query) AS score '
+                 'FROM customers c JOIN transaction_patterns p ON p.customer_id = c.id '
+                 'WHERE c.normalized_name % :query' + scope_sql, {'query': norm.normalized}),
+            ])
+            for name, sql, query_parameters in searches:
+                sql = ('WITH hits AS (' + sql + '), diversified AS (SELECT hits.*, '
+                       'row_number() OVER (PARTITION BY customer_id ORDER BY score DESC, id DESC) AS customer_rank FROM hits) '
+                       'SELECT id, customer_id FROM diversified WHERE customer_rank <= :variants '
+                       'ORDER BY score DESC, id DESC LIMIT :k')
+                add_channel(name, session.execute(text(sql), {**query_parameters, 'customer_id': customer_scope,
+                    'variants': source_limit if customer_scope else 4, 'k': source_limit}))
+        ids, trace = fuse_rankings(channels, candidate_customers, limit, scoped=bool(customer_scope))
+        trace['customer_scope'] = customer_scope
+        patterns = {pattern.id: pattern for pattern in session.scalars(select(Pattern).where(Pattern.id.in_(ids)))} if ids else {}
+        candidates = [patterns[pattern_id] for pattern_id in ids]
+        return (candidates, trace) if with_trace else candidates
 
     def classify(self, session, raw, payer='BIDV'):
         self.check_model(session)
         norm = self.normalize(raw)
+        # Changing thresholds must never let contradictory identifiers pass.
+        guard_cap = min(.59, max(0, self.review_threshold - .01))
         def manual(reason, **evidence):
             return {'customer_id': None, 'customer_name': None, 'score': 0.0, 'decision': 'manual_check',
                     'evidence': {'reason': reason, 'reason_vi': vietnamese_reason(reason), 'candidate_count': 0, 'unknown_customer': True,
@@ -343,33 +427,48 @@ class Core:
                     'normalization': norm.dict(), 'alternatives': []}
         if len({id_key(value) for value in norm.customer_ids}) > 1:
             return manual('Multiple customer IDs require manual allocation', multiple_customer_ids=True)
+        id_tokens = {'id:' + id_key(value) for value in norm.customer_ids}
+        bound_values = {n['value'] for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER'}
+        mixed_values = {n['value'] for n in norm.numbers if n['numeric_type'] == 'MIXED_CODE'
+                        and len(n['value']) >= 6 and sum(c.isdigit() for c in n['value']) >= 4}
+        identity_tokens = id_tokens | {'contract:' + value for value in norm.contract_ids} | \
+            {'bound-id:' + value for value in bound_values} | {'code:' + value for value in mixed_values}
+        identity_owners = posting_owners(session, identity_tokens)
+        customer_scope = None
         if norm.customer_ids:
-            known_id = session.scalar(select(Posting.id).where(
-                posting_in({'id:' + id_key(value) for value in norm.customer_ids})).limit(1))
-            if not known_id:
+            known_customers = set().union(*(identity_owners[token] for token in id_tokens))
+            if not known_customers:
                 return manual('Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required')
+            if len(known_customers) > 1:
+                return manual('Customer ID maps to multiple confirmed profiles; manual check required',
+                              unknown_customer=False, conflicting_customer_ids=sorted(known_customers))
+            customer_scope = next(iter(known_customers))
         contract_owners = {}
         consistent_new_contracts = set()
         for value in norm.contract_ids:
-            owners = set(session.scalars(select(Pattern.customer_id).join(Posting).where(
-                posting_equal('contract:' + value))))
+            owners = identity_owners['contract:' + value]
             if not owners and value in norm.customer_ids:
                 # Two explicit fields agree exactly with an already known customer.
                 # This does not register the contract or learn anything during testing.
                 consistent_new_contracts.add(value)
-            elif not owners or (norm.customer_ids and not any(id_key(owner) == id_key(cid) for owner in owners for cid in norm.customer_ids)):
+            elif not owners or (customer_scope and customer_scope not in owners):
                 return manual('Unknown or conflicting water contract requires manual check', detected_contract_ids=norm.contract_ids)
             contract_owners[value] = owners
+        # Ownership comes from the WHOLE knowledge, before bounded retrieval.
+        # Contradictory known codes must not disappear when a competing customer
+        # falls outside the candidate budget or an explicit-ID search scope.
+        ownership_constraints = [owners for owners in identity_owners.values() if owners]
+        compatible_owners = set.intersection(*ownership_constraints) if ownership_constraints else None
+        ownership_evidence = {token: sorted(owners) for token, owners in identity_owners.items() if owners}
+        if compatible_owners is not None and not compatible_owners:
+            return manual('Conflicting confirmed identifiers require manual check', unknown_customer=False,
+                          confirmed_identifier_owners=ownership_evidence)
         vector = self.embedder.encode(norm.semantic_text)
-        mixed_code_owners = {}
-        for number in norm.numbers:
-            value = number['value']
-            if number['numeric_type'] == 'MIXED_CODE' and len(value) >= 6 and sum(c.isdigit() for c in value) >= 4:
-                mixed_code_owners[value] = set(session.scalars(select(Pattern.customer_id).join(Posting).where(
-                    posting_equal('code:' + value))))
-        candidates = self.retrieve(session, norm, vector, payer)
+        mixed_code_owners = {value: identity_owners['code:' + value] for value in mixed_values}
+        candidates, retrieval_trace = self.retrieve(session, norm, vector, payer,
+                                                  customer_scope=customer_scope, with_trace=True)
         if not candidates:
-            return manual('No confirmed customer evidence; confidence is 0%; manual check required')
+            return manual('No confirmed customer evidence; confidence is 0%; manual check required', retrieval=retrieval_trace)
         customer_ids = {p.customer_id for p in candidates}
         customers = {c.id: c for c in session.scalars(select(Customer).where(Customer.id.in_(customer_ids)))}
         aliases = defaultdict(list)
@@ -402,11 +501,14 @@ class Core:
             posting_equal('detail:' + fingerprint(signature))))) if signature else set()
         ranked = []
         for pattern in candidates:
+            identifier_guards = []
             customer = customers[pattern.customer_id]
             number_comparison = compare_ordered_numbers(norm, pattern.segments, pattern.template_text)
             unique_contract = bool(number_comparison['aligned_contracts'] and number_comparison['template_compatible'] and
                                    all(contract_owners.get(v) == {customer.id} for v in number_comparison['aligned_contracts']))
-            confirmed_token = bool(number_comparison['confirmed_customer_tokens'])
+            unique_bound_tokens = [value for value in number_comparison['confirmed_customer_tokens']
+                                   if identity_owners['bound-id:' + value] == {customer.id}]
+            confirmed_token = bool(unique_bound_tokens)
             unique_mixed_codes = [r['query_value'] for r in number_comparison['ordered_comparison']
                                   if r['type'] == 'MIXED_CODE' and r['same_role'] and r['exact'] and r['same_format']
                                   and mixed_code_owners.get(r['query_value']) == {customer.id}]
@@ -476,19 +578,35 @@ class Core:
                 score = max(score, .93)
                 reason = 'Unique historical payment details and confirmed customer name'
             elif not exact_id:
-                score = min(score, .59)
+                score = min(score, guard_cap)
                 reason = 'Name alone or shared payer does not identify a meter reliably'
             if norm.customer_ids and not exact_id:
-                score = min(score, .59)
+                score = min(score, guard_cap)
                 reason = 'Explicit customer ID does not match this historical customer'
-            unresolved_contract = norm.contract_ids and not number_comparison['aligned_contracts'] and not \
+                identifier_guards.append(reason)
+            unresolved_contract = norm.contract_ids and set(number_comparison['aligned_contracts']) != set(norm.contract_ids) and not \
                 (exact_id and consistent_new_contracts == set(norm.contract_ids) and not any(s.get('numeric_type') == 'CONTRACT_ID' for s in pattern.segments))
-            if number_comparison['contract_conflict'] or number_comparison['code_conflicts'] or unresolved_contract:
-                score = min(score, .59)
+            if number_comparison['contract_conflict'] or unresolved_contract:
+                score = min(score, guard_cap)
                 reason = 'Conflicting contract or identifier order blocks acceptance'
+                identifier_guards.append(reason)
+            if not number_comparison['code_alignment_complete']:
+                score = min(score, guard_cap)
+                reason = 'Unmatched or reordered customer-specific codes require manual check'
+                identifier_guards.append(reason)
+            if number_comparison['unresolved_confirmed_customer_tokens'] and not exact_id:
+                score = min(score, guard_cap)
+                reason = 'Unmatched confirmed customer number requires manual check'
+                identifier_guards.append(reason)
+            if compatible_owners is not None and customer.id not in compatible_owners:
+                score = min(score, guard_cap)
+                reason = 'Conflicting confirmed identifiers require manual check'
+                identifier_guards.append(reason)
             if customer.id in blocked:
                 score = 0
                 reason = 'Human feedback previously rejected this customer for this transaction'
+            retrieval_sources = retrieval_trace['candidate_sources'].get(pattern.id, {})
+            sources_vi = ', '.join(CHANNEL_LABELS[channel] for channel in retrieval_sources)
             ranked.append({'customer_id': customer.id, 'customer_name': customer.canonical_name,
                            'score': round(score, 4), 'evidence': {
                                'reason': reason, 'reason_vi': vietnamese_reason(reason), 'features': {k: round(v, 4) for k, v in features.items()},
@@ -501,9 +619,14 @@ class Core:
                                'explicit_customer_id': exact_id, 'matched_numbers': matched_numbers,
                                'numeric_comparison': number_comparison, 'explicit_contract_ids': norm.contract_ids,
                                'unique_contract_match': unique_contract, 'confirmed_customer_token': confirmed_token,
+                               'unique_confirmed_customer_tokens': unique_bound_tokens,
+                               'confirmed_identifier_owners': ownership_evidence,
+                               'identifier_guards': identifier_guards,
                                'unique_mixed_codes': unique_mixed_codes,
                                'consistent_new_contracts': sorted(consistent_new_contracts),
                                'candidate_count': len(candidates),
+                               'retrieval': {key: value for key, value in retrieval_trace.items() if key != 'candidate_sources'},
+                               'retrieval_sources': retrieval_sources,
                                'history_seen_count': pattern.seen_count, 'history_period': pattern.last_period,
                                'matched_payer_accounts': sorted(payer_accounts[customer.id]),
                                'query_template': norm.template,
@@ -523,6 +646,7 @@ class Core:
                                    reason],
                                'match_steps_vi': [
                                    f'Tìm được {len(candidates)} mẫu lịch sử từ dữ liệu đã xác nhận.',
+                                   'Mẫu này được tìm qua: ' + sources_vi + '.',
                                    'ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.' if exact_id else
                                        'Tên hoặc bí danh khách hàng khớp: ' + ', '.join(alias_matches) if alias_matches else
                                        'Chưa tìm thấy ID hoặc tên khách hàng khớp chính xác.',
@@ -536,13 +660,33 @@ class Core:
             by_customer.setdefault(result['customer_id'], result)
         ranked = list(by_customer.values())
         best = ranked[0]
-        if best['score'] < self.review_threshold and best['customer_id'] not in blocked:
-            return manual('Historical candidates do not identify this customer reliably; confidence is 0%; manual check required',
+        runner_up = ranked[1] if len(ranked) > 1 else None
+        gap = round(best['score'] - runner_up['score'], 4) if runner_up else None
+        best['evidence']['customer_candidate_count'] = len(ranked)
+        best['evidence']['score_margin'] = gap
+        best['evidence']['required_score_margin'] = self.match_margin
+        best['evidence']['runner_up'] = ({key: runner_up[key] for key in ('customer_id', 'customer_name', 'score')}
+                                       if runner_up else None)
+        if (best['score'] < self.review_threshold or best['evidence']['identifier_guards']) and best['customer_id'] not in blocked:
+            guard_reasons = {'Conflicting contract or identifier order blocks acceptance',
+                             'Unmatched or reordered customer-specific codes require manual check',
+                             'Unmatched confirmed customer number requires manual check',
+                             'Conflicting confirmed identifiers require manual check'}
+            manual_reason = best['evidence']['reason'] if best['evidence']['reason'] in guard_reasons else \
+                'Historical candidates do not identify this customer reliably; confidence is 0%; manual check required'
+            return manual(manual_reason,
                           candidate_count=len(candidates),
+                          retrieval=best['evidence']['retrieval'],
+                          confirmed_identifier_owners=ownership_evidence,
                           nearest_history={'customer_id': best['customer_id'], 'customer_name': best['customer_name'],
                                            **best['evidence']})
-        if len(ranked) > 1 and ranked[1]['score'] >= self.review_threshold and best['score'] - ranked[1]['score'] < .04:
-            best['score'] = min(best['score'], self.auto_threshold - .01)
+        if runner_up and runner_up['score'] >= self.review_threshold:
+            best['evidence']['match_steps_vi'].append(
+                f"Khách hàng kế tiếp {runner_up['customer_id']} có điểm {runner_up['score']:.1%}; "
+                f"chênh lệch {gap:.1%}, yêu cầu tối thiểu {self.match_margin:.1%}.")
+        if runner_up and runner_up['score'] >= self.review_threshold and gap < self.match_margin:
+            best['evidence']['score_before_ambiguity_guard'] = best['score']
+            best['score'] = min(best['score'], max(self.review_threshold, self.auto_threshold - .01))
             best['evidence']['reason'] += '; competing customer requires human review'
             best['evidence']['reason_vi'] = vietnamese_reason(best['evidence']['reason'])
             best['evidence']['match_steps_vi'].append('Có nhiều khách hàng có điểm gần nhau; cần kiểm tra thủ công.')

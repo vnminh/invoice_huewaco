@@ -71,7 +71,7 @@ Giá trị số không được đổi sang float/int, không cắt chuỗi, kh�
 
 `HD` luôn là **hợp đồng**, không phải hóa đơn. Chỉ ngữ cảnh `hóa đơn/invoice` mới là số hóa đơn. `TKThe` là thẻ của người trả tiền, không phải mã khách hàng.
 
-Có một ngoại lệ rõ ràng ở **tra cứu hồ sơ mã khách hàng**: `id_key()` bỏ số 0 đầu để tìm các biến thể mã được xác nhận là cùng hồ sơ, ví dụ `001234` và `1234`. Cơ chế này không áp dụng cho hợp đồng, thẻ, tài khoản hoặc giá trị lưu trong numeric features. Giá trị đầy đủ và mẫu theo từng cách ghi vẫn được giữ và ưu tiên so khớp nguyên văn.
+Có một ngoại lệ rõ ràng ở **tra cứu hồ sơ mã khách hàng**: `id_key()` bỏ số 0 đầu để tìm các biến thể mã được xác nhận là cùng hồ sơ, ví dụ `001234` và `1234`. Cơ chế này không áp dụng cho hợp đồng, thẻ, tài khoản hoặc giá trị lưu trong numeric features. Giá trị đầy đủ và mẫu theo từng cách ghi vẫn được giữ và ưu tiên so khớp nguyên văn. Nếu khóa này ánh xạ tới nhiều hồ sơ, đối soát trả manual 0%; học một mã biến thể mới cũng không tự chọn hồ sơ đầu tiên để gộp.
 
 ## 3. Một khách hàng, nhiều mẫu
 
@@ -98,21 +98,43 @@ Mẫu từ phiên bản cũ được tái sử dụng nếu template, structure 
 
 Mặc định tối đa 40 mẫu được rerank, cấu hình bằng `CANDIDATE_LIMIT`.
 
-### Các đường ưu tiên
+### Nhiều đường tìm kiếm và hợp nhất theo thứ hạng
 
-1. **Có mã khách hàng rõ ràng:** dùng posting `id:` để giới hạn mẫu của khách hàng đó. Ưu tiên mẫu có hợp đồng/mã cụ thể khớp, mã khách hàng nguyên văn khớp, template/structure phù hợp, rồi thời điểm cập nhật. Điều này giúp mẫu mới không bị bỏ qua chỉ vì khách hàng đã có nhiều mẫu cũ.
-2. **Hợp đồng hoặc số đã gắn với khách hàng:** thử posting `contract:` và `bound-id:` trước.
-3. **Người trả tiền/mã chữ-số/nội dung đặc trưng:** thử `payer:`, `code:` và `detail:`.
-4. **Khi chưa có đường định danh đủ mạnh:** tìm theo từ, tên, tài khoản, số phù hợp và vector buckets; cộng thêm các truy vấn PostgreSQL bên dưới rồi hợp nhất ứng viên.
+1. **Có mã khách hàng rõ ràng:** tra posting `id:` trên toàn kho. Không có hồ sơ → manual 0%; nhiều hồ sơ → manual 0%. Khi chỉ có một hồ sơ, mọi đường tìm kiếm bên dưới đều giới hạn vào khách hàng này. Đường mã khách hàng ưu tiên nội dung nguyên văn, template/structure, mã nguyên văn và thời điểm cập nhật.
+2. **Nội dung chính xác:** `exact:` chứa SHA-256 của nội dung chuẩn hóa.
+3. **Định danh:** `contract:` cho hợp đồng và `bound-id:` cho số trần đã được người dùng xác nhận thuộc khách hàng.
+4. **Chi tiết có cấu trúc:** `code:` cho mã chữ/số và `detail:` cho chữ ký nội dung thanh toán.
+5. **Người trả tiền:** `payer:` cho tài khoản/thẻ, tách khỏi định danh khách hàng.
+6. **Tìm gần đúng:** postings theo từ/tên/số/vector buckets, vector cosine, full-text, trigram template và trigram tên khách hàng.
 
-Các đường có định danh cụ thể có thể trả ứng viên sớm; không phải mọi truy vấn đều chạy tất cả phương thức search.
+Tìm thấy một tài khoản hoặc mã không làm dừng các đường khác. Mỗi đường postings gom theo **pattern_id trước khi LIMIT**, nên mẫu khớp nhiều token không chiếm nhiều vị trí. Ngân sách mỗi đường là `min(500, max(32, 3 × CANDIDATE_LIMIT))`, mặc định 120 mẫu. Khi chưa giới hạn vào một khách hàng, mỗi đường giữ tối đa 4 mẫu/khách hàng. Đường vector đọc trước tối đa 4 lần ngân sách rồi áp dụng giới hạn này; HNSW vẫn là tìm kiếm gần đúng, không bảo đảm tìm đủ mọi đối thủ.
+
+`app/retrieval.py` hợp nhất bằng weighted reciprocal rank fusion (RRF):
+
+```text
+retrieval_score(pattern) = Σ channel_weight / (60 + rank_in_channel)
+```
+
+| Đường tìm | Trọng số RRF |
+| --- | ---: |
+| Mã khách hàng | 6 |
+| Nội dung chính xác; hợp đồng/token đã xác nhận | 5 |
+| Mã chữ/số/chi tiết thanh toán | 3 |
+| Tài khoản/thẻ trả tiền | 2 |
+| Từ khóa, vector, full-text, trigram, tên | 1 mỗi đường |
+
+RRF cộng thứ hạng, tránh cộng trực tiếp điểm posting, cosine và trigram có thang điểm khác nhau. Công thức dựa trên [bài báo RRF gốc](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf); trọng số và các giới hạn là lựa chọn của ứng dụng, chưa được hiệu chỉnh bằng benchmark mới.
+
+Trước khi lấy top cuối, hệ thống dành chỗ cho một mẫu định danh/nội dung chính xác của mỗi khách hàng trong từng đường này. Các chỗ còn lại lấy theo RRF, tối đa 3 mẫu/khách hàng ở lượt đầu để giữ các khách hàng cạnh tranh; nếu còn chỗ thì bổ sung biến thể. Khi ID rõ ràng đã giới hạn khách hàng, không áp dụng hạn mức 3 biến thể. Cuối cùng chỉ tải đầy đủ các mẫu được chọn, tối đa `CANDIDATE_LIMIT`.
 
 ### Các chỉ mục PostgreSQL
 
 - Khóa tra cứu có digest SHA-256, đồng thời so lại toàn bộ token để bảo đảm giá trị chính xác.
-- Full-text: `to_tsvector('simple', template_text)` và `plainto_tsquery`, xếp hạng `ts_rank_cd`.
+- Full-text: `to_tsvector('simple', template_text)` và `to_tsquery`, nối các từ đã làm sạch bằng OR (`|`), xếp hạng `ts_rank_cd`. Từ bổ sung trong lời chuyển tiền không còn bắt buộc phải xuất hiện hết trong mẫu cũ. Chuỗi query chỉ được tạo từ token chữ `a-z` và truyền bằng tham số SQL. Xem [toán tử full-text PostgreSQL](https://www.postgresql.org/docs/16/textsearch-controls.html).
 - Trigram: `%`/`similarity()` trên template và tên khách hàng.
 - Vector: pgvector HNSW, khoảng cách cosine `embedding <=> query_vector`.
+
+Với ID rõ ràng, vector được xếp hạng chính xác trong tập mẫu của khách hàng đã giới hạn bằng CTE materialized, tránh việc lọc khách hàng sau truy vấn ANN làm mất biến thể cũ. Không tải toàn bộ vector của kho vào Python.
 
 Đây là hybrid retrieval gồm exact/structured + full-text + trigram + vector; không có LLM sinh nội dung để quyết định mã khách hàng.
 
@@ -154,8 +176,10 @@ Mẫu và giao dịch được so bằng sequence vai trò/định dạng, khôn
 
 - Nếu sequence ổn định trùng và template phù hợp, các tham chiếu biến đổi có thể được thêm/bớt mà vẫn đối chiếu định danh theo đúng vai trò. Giao diện hiển thị cả slot hiện tại và slot lịch sử khi chúng khác nhau.
 - Mã hợp đồng khác nhau chặn ghép tự động.
-- Mã chữ/số hoặc số cơ sở khác giá trị ở vai trò tương ứng chặn ghép.
-- Token số trần đã được gắn với khách hàng còn phải trùng vị trí tuyệt đối, vai trò, định dạng và giá trị đầy đủ.
+- Mã chữ/số hoặc số cơ sở thiếu, thêm, đổi giá trị, đổi vai trò/định dạng hoặc chưa đối chiếu được đúng thứ tự chặn ghép tự động, kể cả khi tài khoản hoặc vector rất giống. Các trường biến đổi như tham chiếu ngân hàng, số hóa đơn và lượng tiêu thụ vẫn được xử lý theo vai trò riêng; không áp dụng quy tắc này cho mọi con số.
+- Token số trần đã được gắn với khách hàng còn phải trùng vị trí tuyệt đối, vai trò, định dạng và giá trị đầy đủ, và có **một chủ sở hữu duy nhất trên toàn kho** mới được nâng điểm như định danh chắc chắn.
+- Nếu số trần đã xác nhận trong mẫu cũ bị mất, đổi giá trị/vị trí/vai trò, tài khoản hoặc nội dung giống không được dùng để vượt qua mâu thuẫn. Ngoại lệ: giao dịch đã có IDKH rõ ràng khớp duy nhất với hồ sơ, nên không cần dùng số trần cũ để chứng minh khách hàng.
+- Kiểm tra các chủ sở hữu đã xác nhận trên toàn kho trước khi LIMIT ứng viên. Ví dụ IDKH thuộc A nhưng hợp đồng hoặc mã chữ/số đã xác nhận thuộc B → manual 0%, không để một đường tìm kiếm che khuất mâu thuẫn. Token dùng chung có thể hỗ trợ tìm kiếm nhưng không tự trở thành bằng chứng duy nhất.
 - Tài khoản/thẻ dùng chung không đủ để xác lập khách hàng.
 - Tên tổ chức chung hoặc template chuyển tiền phổ biến không đủ để xác định đồng hồ.
 - Một giao dịch có nhiều mã khách hàng cần phân bổ thủ công; không tự chọn một mã trong danh sách.
@@ -163,9 +187,13 @@ Mẫu và giao dịch được so bằng sequence vai trò/định dạng, khôn
 - Không có bằng chứng khách hàng đáng tin → điểm 0%, kiểm tra thủ công; có thể hiển thị mẫu gần nhất để người dùng tham khảo.
 - Hard negative áp dụng cho cặp nội dung chuẩn hóa/khách hàng đã bị từ chối; ứng viên đó bị hạ về 0.
 
-Sau khi chấm các mẫu, hệ thống giữ **mẫu tốt nhất của mỗi khách hàng**. Các mẫu của cùng khách hàng không tạo một cuộc cạnh tranh giả. Nếu hai khách hàng có điểm đủ cao và chênh dưới 0.04, kết quả được hạ xuống vùng cần duyệt.
+Sau khi chấm các mẫu, hệ thống giữ **mẫu tốt nhất của mỗi khách hàng**. Các mẫu của cùng khách hàng không tạo một cuộc cạnh tranh giả. Nếu khách hàng kế tiếp đạt ngưỡng duyệt và chênh điểm dưới `MATCH_MARGIN` (mặc định 0.08), kết quả được hạ xuống vùng cần duyệt.
 
-Mặc định `AUTO_THRESHOLD=0.90`, `REVIEW_THRESHOLD=0.60`. Các guard có thể hạ điểm dưới vùng duyệt hoặc chuyển về manual 0%, nên không chỉ kiểm tra một ngưỡng tổng.
+Mặc định `AUTO_THRESHOLD=0.90`, `REVIEW_THRESHOLD=0.60`, `MATCH_MARGIN=0.08`. Các guard có thể hạ điểm dưới vùng duyệt hoặc chuyển về manual 0%, nên không chỉ kiểm tra một ngưỡng tổng. Định danh mâu thuẫn vẫn phải manual nếu quản trị viên giảm ngưỡng; không dùng một mức trần cố định cho phép vượt guard khi thay cấu hình. Điểm là mức bằng chứng theo quy tắc, không phải xác suất đã hiệu chuẩn.
+
+Kết quả chứa `retrieval` (phương pháp, số mẫu/khách hàng, số mẫu theo đường tìm), `retrieval_sources` (đường nào tìm thấy mẫu được chọn), `confirmed_identifier_owners`, `unique_confirmed_customer_tokens`, `identifier_guards`, `numeric_comparison`, `runner_up`, `score_margin` và `required_score_margin`. Giao diện giải thích bằng tiếng Việt, kèm mẫu gốc, nguồn dữ liệu và bảng đối chiếu số. Đây là bằng chứng đã kiểm tra, không phải lời suy luận do LLM sinh.
+
+Thay đổi retrieval và guard này không đổi encoder, extractor hoặc schema; không cần học lại hay chạy migration. Theo yêu cầu người dùng, chưa chạy kiểm thử/benchmark phiên bản này. Chưa có số liệu mới để kết luận precision/F1 đã tăng; guard chặt hơn có thể làm nhiều dòng cần duyệt và tìm nhiều đường có thể tăng thời gian xử lý. Cần đánh giá bằng dữ liệu có nhãn tách khỏi kho học trước khi điều chỉnh trọng số/ngưỡng cho triển khai thực tế.
 
 ## 8. Xác nhận, sửa manual và học ngay
 

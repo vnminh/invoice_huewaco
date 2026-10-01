@@ -26,6 +26,7 @@ from .db import (Alias, Base, Customer, HardNegative, KnowledgeReceipt, NumericF
 from .excel import ExcelTransaction, StreamingWorkbook
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
+from .payment_period import with_payment_period
 from .platform_utils import portable_filename
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
 from .workspace import WorkingFiles
@@ -98,7 +99,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
     factory = sessions(engine)
     core = core or Core(candidate_limit=int(os.getenv('CANDIDATE_LIMIT', '40')),
                         auto_threshold=float(os.getenv('AUTO_THRESHOLD', '.9')),
-                        review_threshold=float(os.getenv('REVIEW_THRESHOLD', '.6')))
+                        review_threshold=float(os.getenv('REVIEW_THRESHOLD', '.6')),
+                        match_margin=float(os.getenv('MATCH_MARGIN', '.08')))
     runtime = Path(runtime_dir or os.getenv('RUNTIME_DIR', ROOT / 'runtime')).resolve()
     runtime.mkdir(parents=True, exist_ok=True)
     working = WorkingFiles(runtime)
@@ -574,7 +576,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
     def classify(body: ClassifyInput):
         try:
             with factory() as session:
-                result = core.classify(session, body.transaction, body.payer)
+                result = with_payment_period({**core.classify(session, body.transaction, body.payer), 'raw': body.transaction})
             job = working.create_job('batch_classify', 'Giao dịch nhập trực tiếp')
             ids = working.append(job['id'], [{**result, 'raw': body.transaction, 'payer': body.payer,
                 'source': 'Nhập trực tiếp', 'row_index': None, 'date': body.transaction_date, 'amount': body.amount}])
@@ -755,7 +757,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
             writer.writerow(['row_index', 'date', 'raw', 'amount', 'predicted_customer_id', 'customer_name', 'score',
                 'decision', 'status', 'confirmed_customer_id', 'confirmed_customer_name', 'learned', 'reason',
                 'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row',
-                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file'])
+                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period'])
         yield buffer.getvalue()
         for row in records:
             buffer.seek(0); buffer.truncate(0)
@@ -776,7 +778,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     safe_csv(evidence.get('matched_pattern')), safe_csv(evidence.get('matched_template')),
                     safe_csv(source.get('file')), source.get('row'), safe_csv(row.get('sheet')),
                     safe_csv(row.get('payer')), safe_csv(row.get('reference')), row.get('debit', 0),
-                    safe_csv(' '.join(row.get('validation_errors', []))), safe_csv(row.get('source'))])
+                    safe_csv(' '.join(row.get('validation_errors', []))), safe_csv(row.get('source')),
+                    safe_csv(row.get('payment_period'))])
             yield buffer.getvalue()
 
     @api.get('/export/{job_id}')

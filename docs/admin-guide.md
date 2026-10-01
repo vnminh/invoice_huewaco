@@ -31,6 +31,27 @@ Các con số đầu trang là số khách hàng và mẫu trong kho kiến th�
 
 **Điểm so khớp là điểm xếp hạng bằng chứng, không phải xác suất đã được hiệu chuẩn.**
 
+### Kỳ thanh toán và thời gian chuyển khoản
+
+Cột **Kỳ thanh toán** trả lời hóa đơn nước thuộc tháng nào, lấy từ **nội dung chuyển tiền**, không lấy tháng của cột ngày giao dịch. Khi mở **Kiểm tra**, hệ thống hiển thị kỳ, đoạn nội dung dùng để nhận diện, và thời gian chuyển khoản ở hai mục riêng.
+
+| Nội dung | Kỳ thanh toán |
+| --- | --- |
+| `TT tiền nước tháng 07/2026, chuyển khoản ngày 11/09/2026 09:30` | `07/2026` |
+| `Tiền nước kỳ 7 năm 2026` hoặc `T7/26` | `07/2026` |
+| `TT tiền nước 07/2026` | `07/2026` |
+| `Tiền nước tháng 6,7/2026` hoặc `tháng 6-7/2026` | `06/2026, 07/2026` |
+| `Tiền nước từ tháng 11/2025 đến tháng 2/2026` | `11/2025, 12/2025, 01/2026, 02/2026` |
+| `TT tiền nước ngày 11/09/2026 09:30` hoặc chỉ ghi `tháng 7` | `Chưa xác định` |
+
+Hỗ trợ dấu `/`, `-`, `.`, nhãn tháng/kỳ/T và cách ghi `tháng 072026`. Năm hai chữ số chỉ nhận với nhãn tháng/kỳ/T và được hiểu là `20xx`. Không lấy ngày đầy đủ, thời điểm giao dịch, hạn nộp hoặc giá trị của mã khách hàng/hợp đồng/tài khoản/tham chiếu làm kỳ. Tháng/năm không có nhãn cần ở gần cụm thanh toán tiền nước; hậu tố kỳ `@@MM/YYYY` của nội dung BIDV O@L cũng được nhận diện. Không suy năm bị thiếu từ ngày chuyển khoản hoặc ngày hiện tại.
+
+Nếu có nhiều kỳ rõ ràng, hệ thống liệt kê các kỳ và bỏ trùng. Khoảng có cả hai đầu tháng/năm được mở rộng tối đa 24 tháng; khoảng ngược hoặc dài hơn được để chưa xác định. Nội dung không đủ căn cứ để xác định tháng/năm hiển thị **Chưa xác định**; điều này không tự thay đổi đề xuất khách hàng hoặc điểm so khớp.
+
+CSV kết quả thêm cột `payment_period`; cột `date` vẫn là ngày giờ chuyển khoản. Có thể tìm trong bảng bằng kỳ chuẩn hóa, ví dụ `07/2026`. Kết quả làm việc cũ được bổ sung kỳ khi đọc lại từ nội dung, không cần đối soát lại hoặc chạy SQL.
+
+**Chỉ luồng đối soát có thông tin này.** Luồng học tiếp tục bỏ ngày/tháng theo bộ chuẩn hóa hiện tại; không đưa kỳ vào embedding, fingerprint, numeric slots hoặc điểm so khớp. CSV đã học giữ nguyên các cột và logic. Kỳ được lưu trong tệp kết quả làm việc, không thêm cột/bảng PostgreSQL.
+
 ### Nhiều sheet và các bố cục ngân hàng
 
 Mỗi sheet được nhận diện theo tiêu đề cột: ngày, nội dung/mô tả/diễn giải, số tiền ghi có/ghi nợ hoặc số tiền có dấu, tham chiếu. Không áp dụng cột cố định của BIDV cho ngân hàng khác. Hàng tiêu đề được tìm trong 100 dòng đầu.
