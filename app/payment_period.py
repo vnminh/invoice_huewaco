@@ -4,7 +4,9 @@ from __future__ import annotations
 import re
 
 from .normalize import fold
+from .bank_content import mb_water_fields
 
+PAYMENT_PERIOD_VERSION = 3
 MONTH = r'(?:0?[1-9]|1[0-2])'
 YEAR = r'(?:20\d{2}|\d{2})'
 LABEL = r'(?<![a-z\d])(?:(?:thang|ky|month)(?:\s+(?:thanh\s+toan|tien\s+nuoc|hoa\s+don))?|t)\s*[:.]?\s*'
@@ -28,6 +30,8 @@ TRANSFER_CONTEXT = re.compile(
 WATER_PAYMENT = re.compile(r'\b(?:tien\s*nuoc|nuoc\s*(?:sinh|sach|may)|phi\s*nuoc|cp\s*nuoc|water)\b')
 
 LABELED = re.compile(LABEL + rf'(?P<month>{MONTH}){YEAR_SEPARATOR}(?P<year>{YEAR})' + END)
+# A compact period needs an explicit label: "kỳ 082026" is August 2026,
+# while an unlabelled six-digit value may be a customer/contract identifier.
 COMPACT = re.compile(LABEL + rf'(?P<month>{MONTH})(?P<year>20\d{{2}})' + END)
 MONTH_LIST = re.compile(LABEL + rf'(?P<months>{MONTH}(?:\s*(?:,|&|va|\+)\s*{MONTH})+)'
                         + YEAR_SEPARATOR + rf'(?P<year>{YEAR})' + END)
@@ -36,12 +40,13 @@ MONTH_RANGE = re.compile(LABEL + rf'(?P<first>{MONTH})\s*(?:-|den)\s*(?P<last>{M
 FULL_RANGE = re.compile(LABEL + rf'(?P<first>{MONTH}){YEAR_SEPARATOR}(?P<year>{YEAR})'
                        + r'\s*(?:den|-)\s*' + rf'(?:{LABEL})?(?P<last>{MONTH})'
                        + YEAR_SEPARATOR + rf'(?P<last_year>{YEAR})' + END)
-UNLABELED = re.compile(rf'(?<![a-z\d_/.-])(?P<month>{MONTH})\s*[/.-]\s*(?P<year>20\d{{2}})' + END)
+UNLABELED = re.compile(rf'(?<![a-z\d_/-])(?P<month>{MONTH})\s*[/.-]\s*(?P<year>20\d{{2}})' + END)
 
 
 def payment_period_fields(raw: str) -> dict:
     """Extract explicit periods without borrowing the transfer date/year.
 
+    Separated/compact periods share the same labels (kỳ 8/2026 or kỳ 082026).
     Short years are supported only with a billing label (T7/26 -> 07/2026).
     Dates, labeled identifiers and transfer-date contexts cannot provide a period.
     A bare MM/YYYY needs nearby water-payment wording or the BIDV @@ suffix.
@@ -57,6 +62,14 @@ def payment_period_fields(raw: str) -> dict:
     protected = [match.span(1) for match in IDENTIFIER.finditer(value)]
     full_dates = [match.span() for match in FULL_DATE.finditer(value)]
     claimed, periods, matches = [], [], []
+    bank_fields = mb_water_fields(value)
+    if bank_fields:
+        month, year = bank_fields['period'].split('/')
+        period = f'{int(month):02d}/{year}'
+        start, end = bank_fields['period_span']
+        periods.append(period)
+        claimed.append((start, end))
+        matches.append({'text': original[offsets[start]:offsets[end]], 'periods': [period], 'source': 'bank_field'})
 
     def overlaps(span, spans):
         return any(span[0] < end and span[1] > start for start, end in spans)
@@ -64,7 +77,13 @@ def payment_period_fields(raw: str) -> dict:
     def add(match, months, *, grouped=False, labeled=True, explicit_periods=None):
         span = match.span()
         prefix = value[max(0, span[0] - 100):span[0]]
-        if overlaps(span, protected) or overlaps(span, claimed) or TRANSFER_CONTEXT.search(prefix):
+        transfer_context = TRANSFER_CONTEXT.search(prefix)
+        # "chuyển khoản kỳ 082026" names the bill's cycle. A plain transfer
+        # action does not turn this explicit "kỳ" into a transfer date; actual
+        # date/time/deadline labels and complete dates remain excluded.
+        billing_cycle_after_transfer = bool(labeled and value[span[0]:].startswith('ky') and transfer_context
+            and re.fullmatch(r'chuyen\s*(?:khoan|tien)\s*[:=]?\s*', transfer_context.group()))
+        if overlaps(span, protected) or overlaps(span, claimed) or (transfer_context and not billing_cycle_after_transfer):
             return
         if re.match(r'\s*(?:t\s*)?\d{1,2}:\d{2}', value[span[1]:]):
             return
@@ -114,11 +133,12 @@ def payment_period_fields(raw: str) -> dict:
 
     periods.sort(key=lambda period: (period[3:], period[:2]))
     return {'payment_period': ', '.join(periods), 'payment_periods': periods,
-            'payment_period_evidence': {'status': 'identified' if periods else 'not_found', 'matches': matches}}
+            'payment_period_evidence': {'version': PAYMENT_PERIOD_VERSION,
+                                       'status': 'identified' if periods else 'not_found', 'matches': matches}}
 
 
 def with_payment_period(record: dict) -> dict:
     """Decorate old working files on read; never backfill PostgreSQL."""
-    if 'payment_periods' in record:
+    if 'payment_periods' in record and record.get('payment_period_evidence', {}).get('version') == PAYMENT_PERIOD_VERSION:
         return record
     return {**record, **payment_period_fields(record.get('raw', ''))}
