@@ -26,6 +26,7 @@ from .db import (Alias, Base, Customer, HardNegative, KnowledgeReceipt, NumericF
 from .excel import ExcelTransaction, StreamingWorkbook
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
+from .name_extraction import NameExtractor
 from .payment_period import with_payment_period
 from .platform_utils import portable_filename
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
@@ -100,7 +101,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
     core = core or Core(candidate_limit=int(os.getenv('CANDIDATE_LIMIT', '40')),
                         auto_threshold=float(os.getenv('AUTO_THRESHOLD', '.9')),
                         review_threshold=float(os.getenv('REVIEW_THRESHOLD', '.6')),
-                        match_margin=float(os.getenv('MATCH_MARGIN', '.08')))
+                        match_margin=float(os.getenv('MATCH_MARGIN', '.08')),
+                        name_extractor=NameExtractor())
     runtime = Path(runtime_dir or os.getenv('RUNTIME_DIR', ROOT / 'runtime')).resolve()
     runtime.mkdir(parents=True, exist_ok=True)
     working = WorkingFiles(runtime)
@@ -207,6 +209,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                             failed = prepare_rows(core, [row for row in batch
                                 if not row.validation_errors and row.debit == 0 and row.amount > 0],
                                 row_errors, check_cancel)
+                            core.prepare_names([row.raw for row in batch if id(row) not in failed], check_cancel)
                             results = []
                             with factory.begin() as session:
                                 if engine.dialect.name == 'postgresql':
@@ -235,7 +238,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                     results.append({**result, 'raw': row.raw, 'payer': row.payer, 'source': Path(path).name,
                                         'sheet': row.sheet, 'reference': row.reference, 'debit': row.debit,
                                         'validation_errors': row.validation_errors, 'row_index': row.row_index,
-                                        'date': row.date, 'amount': row.amount})
+                                        'date': row.date, 'amount': row.amount,
+                                        **(core.extract_names(row.raw) if 'name_extraction' not in result else {})})
                             check_cancel()
                             working.append(job_id, results)
                             for result in results:
@@ -757,7 +761,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
             writer.writerow(['row_index', 'date', 'raw', 'amount', 'predicted_customer_id', 'customer_name', 'score',
                 'decision', 'status', 'confirmed_customer_id', 'confirmed_customer_name', 'learned', 'reason',
                 'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row',
-                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period'])
+                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period',
+                'extracted_name', 'extracted_names', 'name_extraction_status'])
         yield buffer.getvalue()
         for row in records:
             buffer.seek(0); buffer.truncate(0)
@@ -779,7 +784,9 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     safe_csv(source.get('file')), source.get('row'), safe_csv(row.get('sheet')),
                     safe_csv(row.get('payer')), safe_csv(row.get('reference')), row.get('debit', 0),
                     safe_csv(' '.join(row.get('validation_errors', []))), safe_csv(row.get('source')),
-                    safe_csv(row.get('payment_period'))])
+                    safe_csv(row.get('payment_period')), safe_csv(row.get('extracted_name')),
+                    safe_csv('; '.join(row.get('extracted_names', []))),
+                    safe_csv(row.get('name_extraction', {}).get('status'))])
             yield buffer.getvalue()
 
     @api.get('/export/{job_id}')

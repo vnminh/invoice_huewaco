@@ -14,6 +14,7 @@ from .db import (Alias, Customer, HardNegative, KnowledgeReceipt, Metadata,
 from .embedding import Embedder, cosine, vector_buckets
 from .normalize import fold, normalize_text, identity_signature, branch_markers, RuleExtractor
 from .numeric_match import compare_ordered_numbers
+from .name_extraction import name_fields, name_key, structured_name_fields
 from .retrieval import CHANNEL_LABELS, fuse_rankings
 
 WEIGHTS = {'customer': .30, 'payer': .10, 'text': .20, 'structure': .15, 'number': .15, 'history': .10}
@@ -108,12 +109,13 @@ def learning_receipt(raw, customer_id, date='', amount=0, payer='BIDV'):
 
 class Core:
     def __init__(self, embedder=None, candidate_limit=40, auto_threshold=.9, review_threshold=.6, extractor=None,
-                 match_margin=.08):
+                 match_margin=.08, name_extractor=None):
         self.embedder = embedder or Embedder()
         self.candidate_limit = candidate_limit
         self.auto_threshold = auto_threshold
         self.review_threshold = review_threshold
         self.match_margin = match_margin
+        self.name_extractor = name_extractor
         if not 1 <= candidate_limit <= 500:
             raise ValueError('candidate_limit must be between 1 and 500')
         if not 0 <= review_threshold < auto_threshold <= 1 or not 0 <= match_margin <= 1:
@@ -127,6 +129,14 @@ class Core:
 
     def prepare_batch(self, raws):
         self.embedder.prepare([self.normalize(raw).semantic_text for raw in raws])
+
+    def prepare_names(self, raws, check_cancel=None):
+        # Deliberately separate from prepare_batch(), which learning also calls.
+        if self.name_extractor:
+            self.name_extractor.prepare(raws, check_cancel=check_cancel)
+
+    def extract_names(self, raw):
+        return name_fields(self.name_extractor.extract(raw)) if self.name_extractor else structured_name_fields(raw)
 
     def check_model(self, session, writing=False):
         meta = session.get(Metadata, 'embedding_model')
@@ -296,7 +306,7 @@ class Core:
                          for token, weight in tokens.items() if token not in existing])
         return True
 
-    def retrieve(self, session, norm, vector, payer, *, customer_scope=None, with_trace=False):
+    def retrieve(self, session, norm, vector, payer, *, customer_scope=None, with_trace=False, extracted_names=None):
         """Combine bounded search rankings; only an explicit known ID scopes the search."""
         limit = self.candidate_limit
         source_limit = min(500, max(32, limit * 3))
@@ -364,6 +374,8 @@ class Core:
             structured.add('detail:' + fingerprint(signature))
         postings_channel('structured', structured)
         postings_channel('payer', {'payer:' + value for value in norm.payer_accounts})
+        name_words = text_tokens(' '.join(fold(name) for name in (extracted_names or [])))
+        postings_channel('name_entity', {'name:' + word for word in name_words})
         words = text_tokens(norm.normalized)
         tokens = {'w:' + word for word in words} | {'name:' + word for word in words}
         tokens.update('n:' + n['value'] for n in norm.numbers if n['numeric_type'] in (
@@ -418,13 +430,14 @@ class Core:
     def classify(self, session, raw, payer='BIDV'):
         self.check_model(session)
         norm = self.normalize(raw)
+        extracted = self.extract_names(raw)
         # Changing thresholds must never let contradictory identifiers pass.
         guard_cap = min(.59, max(0, self.review_threshold - .01))
         def manual(reason, **evidence):
             return {'customer_id': None, 'customer_name': None, 'score': 0.0, 'decision': 'manual_check',
                     'evidence': {'reason': reason, 'reason_vi': vietnamese_reason(reason), 'candidate_count': 0, 'unknown_customer': True,
                                  'detected_customer_ids': norm.customer_ids, **evidence},
-                    'normalization': norm.dict(), 'alternatives': []}
+                    'normalization': norm.dict(), 'alternatives': [], **extracted}
         if len({id_key(value) for value in norm.customer_ids}) > 1:
             return manual('Multiple customer IDs require manual allocation', multiple_customer_ids=True)
         id_tokens = {'id:' + id_key(value) for value in norm.customer_ids}
@@ -466,7 +479,8 @@ class Core:
         vector = self.embedder.encode(norm.semantic_text)
         mixed_code_owners = {value: identity_owners['code:' + value] for value in mixed_values}
         candidates, retrieval_trace = self.retrieve(session, norm, vector, payer,
-                                                  customer_scope=customer_scope, with_trace=True)
+                                                  customer_scope=customer_scope, with_trace=True,
+                                                  extracted_names=extracted['extracted_names'])
         if not candidates:
             return manual('No confirmed customer evidence; confidence is 0%; manual check required', retrieval=retrieval_trace)
         customer_ids = {p.customer_id for p in candidates}
@@ -514,6 +528,8 @@ class Core:
                                   and mixed_code_owners.get(r['query_value']) == {customer.id}]
             exact_id = any(id_key(customer.id) == id_key(value) for value in norm.customer_ids)
             alias_matches = [a for a in aliases[customer.id] if len(a) > 3 and re.search(r'(?<!\w)' + re.escape(a) + r'(?!\w)', norm.normalized)]
+            matched_extracted_names = [name for name in extracted['extracted_names'] if
+                                       name_key(name) in {name_key(alias) for alias in aliases[customer.id]}]
             customer_score = 1.0 if exact_id or unique_contract or confirmed_token or unique_mixed_codes or alias_matches else 0.0
             account_match = bool(payer_accounts[customer.id])
             unique_accounts = [a for a in payer_accounts[customer.id] if account_owners[a] == {customer.id}]
@@ -616,6 +632,7 @@ class Core:
                                'pattern_source': {'file': pattern.source_file, 'row': pattern.source_row,
                                                   'date': pattern.example_date},
                                'matched_template': pattern.template_text, 'matched_aliases': alias_matches,
+                               'matched_extracted_names': matched_extracted_names,
                                'explicit_customer_id': exact_id, 'matched_numbers': matched_numbers,
                                'numeric_comparison': number_comparison, 'explicit_contract_ids': norm.contract_ids,
                                'unique_contract_match': unique_contract, 'confirmed_customer_token': confirmed_token,
@@ -693,6 +710,7 @@ class Core:
         best['decision'] = 'auto_accept' if best['score'] >= self.auto_threshold else 'review' if best['score'] >= self.review_threshold else 'reject'
         best['normalization'] = norm.dict()
         best['alternatives'] = [{k: r[k] for k in ('customer_id', 'customer_name', 'score')} for r in ranked[1:6]]
+        best.update(extracted)
         return best
 
     def review(self, session, record, accepted, correct_customer_id=None, customer_name=''):

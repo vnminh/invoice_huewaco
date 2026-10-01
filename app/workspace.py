@@ -14,6 +14,7 @@ import uuid
 from .db import now
 from .normalize import fold
 from .payment_period import with_payment_period
+from .name_extraction import structured_name_fields
 from .platform_utils import sync_directory
 
 
@@ -173,6 +174,8 @@ class WorkingFiles:
                 source.seek(offset)
                 original = json.loads(source.readline())
             record = {**original, **self._read(overlay)} if overlay.exists() else original
+            if 'name_extraction' not in record:
+                record = {**record, **structured_name_fields(record.get('raw', ''))}
             return with_payment_period(record)
 
     def rows(self, job_id=None, reverse=False):
@@ -200,7 +203,7 @@ class WorkingFiles:
                 continue
             if q and fold(q) not in fold(' '.join(str(row.get(key) or '') for key in
                        ('raw', 'customer_id', 'customer_name', 'confirmed_customer_id', 'confirmed_customer_name',
-                        'sheet', 'payer', 'reference', 'source', 'payment_period'))):
+                        'sheet', 'payer', 'reference', 'source', 'payment_period', 'extracted_name'))):
                 continue
             if offset <= total < offset + limit:
                 items.append(row)

@@ -39,18 +39,38 @@ Cột **Kỳ thanh toán** trả lời hóa đơn nước thuộc tháng nào, l
 | --- | --- |
 | `TT tiền nước tháng 07/2026, chuyển khoản ngày 11/09/2026 09:30` | `07/2026` |
 | `Tiền nước kỳ 7 năm 2026` hoặc `T7/26` | `07/2026` |
+| `kỳ 8/2026`, `ky 082026` hoặc `chuyển khoản kỳ 082026` | `08/2026` |
 | `TT tiền nước 07/2026` | `07/2026` |
+| `MB.…HUE WATER SUPPLY JSC.131173.1030324868.08/2026.Tran Thi Ngoc..1` với bố cục MB hợp lệ | `08/2026` |
 | `Tiền nước tháng 6,7/2026` hoặc `tháng 6-7/2026` | `06/2026, 07/2026` |
 | `Tiền nước từ tháng 11/2025 đến tháng 2/2026` | `11/2025, 12/2025, 01/2026, 02/2026` |
 | `TT tiền nước ngày 11/09/2026 09:30` hoặc chỉ ghi `tháng 7` | `Chưa xác định` |
 
-Hỗ trợ dấu `/`, `-`, `.`, nhãn tháng/kỳ/T và cách ghi `tháng 072026`. Năm hai chữ số chỉ nhận với nhãn tháng/kỳ/T và được hiểu là `20xx`. Không lấy ngày đầy đủ, thời điểm giao dịch, hạn nộp hoặc giá trị của mã khách hàng/hợp đồng/tài khoản/tham chiếu làm kỳ. Tháng/năm không có nhãn cần ở gần cụm thanh toán tiền nước; hậu tố kỳ `@@MM/YYYY` của nội dung BIDV O@L cũng được nhận diện. Không suy năm bị thiếu từ ngày chuyển khoản hoặc ngày hiện tại.
+Hỗ trợ dấu `/`, `-`, `.`, nhãn tháng/kỳ/T, có hoặc không dấu tiếng Việt, và cách ghi liền tháng/năm như `tháng 072026`, `kỳ 082026`, `KY082026`. Chuỗi sáu chữ số không có nhãn kỳ/tháng/T không tự được coi là kỳ hóa đơn. Năm hai chữ số chỉ nhận với nhãn tháng/kỳ/T và được hiểu là `20xx`. Không lấy ngày đầy đủ, thời điểm giao dịch, hạn nộp hoặc giá trị của mã khách hàng/hợp đồng/tài khoản/tham chiếu làm kỳ. Tháng/năm không có nhãn cần ở gần cụm thanh toán tiền nước; hậu tố kỳ `@@MM/YYYY` của nội dung BIDV O@L cũng được nhận diện. Không suy năm bị thiếu từ ngày chuyển khoản hoặc ngày hiện tại.
 
 Nếu có nhiều kỳ rõ ràng, hệ thống liệt kê các kỳ và bỏ trùng. Khoảng có cả hai đầu tháng/năm được mở rộng tối đa 24 tháng; khoảng ngược hoặc dài hơn được để chưa xác định. Nội dung không đủ căn cứ để xác định tháng/năm hiển thị **Chưa xác định**; điều này không tự thay đổi đề xuất khách hàng hoặc điểm so khớp.
 
 CSV kết quả thêm cột `payment_period`; cột `date` vẫn là ngày giờ chuyển khoản. Có thể tìm trong bảng bằng kỳ chuẩn hóa, ví dụ `07/2026`. Kết quả làm việc cũ được bổ sung kỳ khi đọc lại từ nội dung, không cần đối soát lại hoặc chạy SQL.
 
 **Chỉ luồng đối soát có thông tin này.** Luồng học tiếp tục bỏ ngày/tháng theo bộ chuẩn hóa hiện tại; không đưa kỳ vào embedding, fingerprint, numeric slots hoặc điểm so khớp. CSV đã học giữ nguyên các cột và logic. Kỳ được lưu trong tệp kết quả làm việc, không thêm cột/bảng PostgreSQL.
+
+### Tên trong nội dung chuyển tiền
+
+Tên trích từ nội dung hiển thị dưới khách hàng đề xuất và trong màn hình **Kiểm tra**. Đây là gợi ý riêng: người chuyển tiền có thể trả cho người khác, nhiều khách hàng có thể trùng tên. Hệ thống chưa biết khách hàng vẫn cần kiểm tra thủ công ở 0%, dù đọc được tên.
+
+Ví dụ nội dung:
+
+```text
+MB.5051-66994-20260913-101133-06800.20260913.HUE WATER SUPPLY JSC.131173.1030324868.08/2026.Tran Thi Ngoc..1
+```
+
+Bố cục này có trường kỳ **08/2026** và trường tên **Tran Thi Ngoc**. Phần `20260913-101133` là ngày giờ chuyển tiền, không phải kỳ hóa đơn. `HUE WATER SUPPLY JSC` là đơn vị nhận tiền, không phải tên khách hàng. Bộ đọc trường tên/kỳ không tự gán `131173` hoặc `1030324868` thành mã khách hàng; số vẫn đi qua kiểm tra định danh riêng.
+
+Nguồn tên được phân biệt giữa **trường tên trong nội dung ngân hàng** và **tên nhận diện tự động**. Bố cục MB hợp lệ có thể cung cấp tên đầy đủ ngay cả khi nhận diện tự động chưa sẵn sàng hoặc chỉ nhận được một phần tên. Hệ thống giữ cách viết gốc, không tự thêm dấu tiếng Việt. Với nhiều tên, cần kiểm tra người nào thuộc giao dịch.
+
+Trong màn hình kiểm tra, có thể bấm **Dùng tên trong nội dung**, rồi kiểm tra mã khách hàng và tên trước khi **Xác nhận & học**. Bấm nút dùng tên hoặc sửa ô chưa làm phát sinh kiến thức. Không tự đăng ký tên NER vào kho; chỉ tên/bí danh người dùng xác nhận mới được học.
+
+CSV kết quả có thêm `extracted_name` (một tên được chọn, để trống nếu có nhiều lựa chọn), `extracted_names` (các tên, cách nhau bằng `;`) và `name_extraction_status`. Chi tiết nguồn/vị trí tên nằm trong tệp kết quả làm việc. CSV đã học giữ nguyên định dạng. Với tệp kết quả cũ, hệ thống có thể đọc bổ sung trường tên theo bố cục MB khi mở lại; không chạy lại NER hay thay đổi đề xuất cũ. Muốn nhận diện NER cho các nội dung cũ cần đối soát một tệp mới.
 
 ### Nhiều sheet và các bố cục ngân hàng
 
