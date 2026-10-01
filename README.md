@@ -72,6 +72,8 @@ Tài liệu chi tiết:
 
 Encoder **intfloat/multilingual-e5-small**, 384 chiều, hỗ trợ tiếng Việt và mặc định chạy CPU. Không dùng Ollama/LLM sinh nội dung cục bộ. Văn bản giữ dấu cho encoder; số/định danh kiểm tra riêng bằng quy tắc. Cache mô hình mặc định runtime/models.
 
+Đối soát bổ sung NER **NlpHUST/ner-vietnamese-electra-base** để trích tên từ nội dung chuyển tiền. Tên giúp tìm ứng viên và hiển thị cho người dùng kiểm tra, không tự xác lập mã khách hàng. Mô hình chỉ tải khi đối soát lần đầu; trường tên theo bố cục MB vẫn được đọc khi NER chưa sẵn sàng. Cài lại `requirements.txt` và khởi động lại dịch vụ sau khi cập nhật. Xem [cấu hình và giới hạn NER](docs/matching-and-learning.md#nhận-diện-tên-trong-nội-dung-chuyển-tiền).
+
 Retrieval kết hợp posting theo mã/tên/người trả tiền/hợp đồng, full-text, trigram và pgvector HNSW bằng thứ hạng RRF; giữ nhiều khách hàng trong tập ứng viên và rerank tối đa 40 mẫu. Không dừng ở tài khoản/mã đầu tiên. Sau đó lấy mẫu tốt nhất mỗi khách hàng để tránh các mẫu cùng khách hàng cạnh tranh giả. Điểm hiển thị là điểm bằng chứng, không phải xác suất đã hiệu chuẩn.
 
 HD là **hợp đồng**; TKThe là thẻ người trả tiền. Số giữ chuỗi đầy đủ, thứ tự, vai trò, định dạng và số 0 đầu; không cắt chuỗi dài. Chủ sở hữu định danh được kiểm tra trên toàn kho, độc lập với giới hạn ứng viên. Hợp đồng/mã xung đột, mã/số cơ sở chưa khớp đủ và token/tài khoản dùng chung không đủ để ghép tự động. Hai khách hàng có điểm đủ cao và chênh dưới `MATCH_MARGIN=0.08` phải duyệt. Nhãn ko được bỏ qua khi học.
@@ -80,7 +82,7 @@ Giới hạn upload 100 MB, XLSX giải nén tối đa 2 GB; đọc streaming, c
 
 Đối soát quét mọi sheet, nhận diện cột theo tiêu đề của từng bố cục; không cố định BIDV. CSV kết quả/đã học giữ sheet, ngân hàng/kênh và tham chiếu. Tác vụ hiển thị số dòng từng sheet và sheet chưa nhận diện được. Các dòng chưa rõ chiều ghi có/ghi nợ được đưa về kiểm tra thủ công 0%; xem chi tiết bố cục trong hướng dẫn quản trị.
 
-Kết quả đối soát có cột **Kỳ thanh toán**, lấy tháng/năm hóa đơn nước từ nội dung và tách khỏi ngày giờ chuyển khoản. Không đủ căn cứ thì hiển thị **Chưa xác định**. CSV kết quả thêm `payment_period`; luồng học, CSV đã học, schema và cách bỏ ngày/kỳ khi so khớp giữ nguyên.
+Kết quả đối soát có cột **Kỳ thanh toán**, lấy tháng/năm hóa đơn nước từ nội dung và tách khỏi ngày giờ chuyển khoản. Không đủ căn cứ thì hiển thị **Chưa xác định**. CSV kết quả thêm `payment_period`, `extracted_name`, `extracted_names`, `name_extraction_status`; luồng học, CSV đã học, schema và cách bỏ ngày/kỳ khi so khớp giữ nguyên.
 
 Lỗi riêng một dòng khi đọc Excel/CSV, học hoặc đối soát được ghi theo sheet/số dòng và bỏ qua để tiếp tục. Tác vụ báo số dòng lỗi, cho xem nguyên nhân và tải toàn bộ danh sách CSV. Mỗi dòng học dùng savepoint để rollback riêng; lỗi toàn tệp, cấu hình hoặc mất kết nối vẫn dừng. Báo cáo dòng lỗi lưu ngoài PostgreSQL cùng working files.
 

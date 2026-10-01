@@ -105,7 +105,8 @@ Mặc định tối đa 40 mẫu được rerank, cấu hình bằng `CANDIDATE_
 3. **Định danh:** `contract:` cho hợp đồng và `bound-id:` cho số trần đã được người dùng xác nhận thuộc khách hàng.
 4. **Chi tiết có cấu trúc:** `code:` cho mã chữ/số và `detail:` cho chữ ký nội dung thanh toán.
 5. **Người trả tiền:** `payer:` cho tài khoản/thẻ, tách khỏi định danh khách hàng.
-6. **Tìm gần đúng:** postings theo từ/tên/số/vector buckets, vector cosine, full-text, trigram template và trigram tên khách hàng.
+6. **Tên trích từ nội dung:** NER hoặc trường tên ngân hàng tạo đường `name_entity`, tra `name:` trong các bí danh đã học.
+7. **Tìm gần đúng:** postings theo từ/tên/số/vector buckets, vector cosine, full-text, trigram template và trigram tên khách hàng.
 
 Tìm thấy một tài khoản hoặc mã không làm dừng các đường khác. Mỗi đường postings gom theo **pattern_id trước khi LIMIT**, nên mẫu khớp nhiều token không chiếm nhiều vị trí. Ngân sách mỗi đường là `min(500, max(32, 3 × CANDIDATE_LIMIT))`, mặc định 120 mẫu. Khi chưa giới hạn vào một khách hàng, mỗi đường giữ tối đa 4 mẫu/khách hàng. Đường vector đọc trước tối đa 4 lần ngân sách rồi áp dụng giới hạn này; HNSW vẫn là tìm kiếm gần đúng, không bảo đảm tìm đủ mọi đối thủ.
 
@@ -121,6 +122,7 @@ retrieval_score(pattern) = Σ channel_weight / (60 + rank_in_channel)
 | Nội dung chính xác; hợp đồng/token đã xác nhận | 5 |
 | Mã chữ/số/chi tiết thanh toán | 3 |
 | Tài khoản/thẻ trả tiền | 2 |
+| Tên trích từ nội dung (`name_entity`) | 2 |
 | Từ khóa, vector, full-text, trigram, tên | 1 mỗi đường |
 
 RRF cộng thứ hạng, tránh cộng trực tiếp điểm posting, cosine và trigram có thang điểm khác nhau. Công thức dựa trên [bài báo RRF gốc](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf); trọng số và các giới hạn là lựa chọn của ứng dụng, chưa được hiệu chỉnh bằng benchmark mới.
@@ -145,6 +147,41 @@ Encoder hiện tại là `intfloat/multilingual-e5-small`, 384 chiều, chạy C
 Nội dung đưa vào encoder giữ dấu tiếng Việt, thay số định danh bằng vai trò và bỏ ngày. Hai phía dùng prefix `query:` cho so sánh đối xứng. Vector được chuẩn hóa và cache theo mô hình/nội dung. Tham khảo [model card chính thức](https://huggingface.co/intfloat/multilingual-e5-small).
 
 Cosine cao chỉ hỗ trợ tìm/xếp hạng nội dung. Nó không chứng minh một hợp đồng hoặc khách hàng là đúng và không vượt qua mâu thuẫn định danh.
+
+### Nhận diện tên trong nội dung chuyển tiền
+
+`app/name_extraction.py` dùng [NlpHUST/ner-vietnamese-electra-base](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base), một mô hình token classification tiếng Việt dựa trên ELECTRA, huấn luyện NER trên VLSP 2018. Đây là mô hình nhận diện thực thể, không phải LLM sinh văn bản. [Cấu hình chính thức](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base/blob/main/config.json) có nhãn PERSON và ORGANIZATION; bộ trích chỉ nhận hai loại này khi điểm đạt ngưỡng. Điểm NER là điểm của thực thể, không phải độ tin cậy ghép khách hàng. Chất lượng trên nội dung ngân hàng, đặc biệt tên không dấu, cần đánh giá trên dữ liệu thực tế; chưa có benchmark mới cho thay đổi này.
+
+NER chỉ được gọi trong **đối soát**, tách khỏi `Core.normalize()`, `prepare_batch()` và `learn()`. Bộ chuẩn hóa số, semantic text, fingerprint, metadata `feature_extractor` và schema giữ nguyên. Không cần SQL hoặc học lại kho chỉ để bật NER. Luồng học vẫn bỏ ngày/kỳ theo quy tắc hiện có.
+
+Các bước trích và sử dụng tên:
+
+1. Tạo một bản nội dung dành riêng cho NER: che token có chữ số và đổi dấu phân cách sang khoảng trắng, giữ nguyên độ dài/vị trí. Nội dung gốc và các số dùng để so khớp không bị sửa.
+2. Với bố cục MB đã xác định, `app/bank_content.py` kiểm tra toàn bộ cấu trúc, ngày giờ hợp lệ, ngày lặp lại và tên đơn vị cấp nước. Trường tên sau kỳ được đọc riêng; đơn vị nhận tiền bị che trong đầu vào NER. Thêm một đầu vào ngữ cảnh người chuyển tiền để hỗ trợ nhận diện tên không dấu. Bộ đọc này không suy vai trò của các số đứng trước kỳ.
+3. Chạy token-classification theo nhóm, tokenizer nhanh và cửa sổ chồng lấn cho nội dung dài. Lấy tên bằng offset từ **văn bản gốc**, không lấy chuỗi token đã sửa, không sinh thêm dấu hay ký tự. Lọc tên có chữ số, tên đơn vị nhận tiền, tên quá dài/ngắn và kết quả dưới ngưỡng.
+4. Giữ tên đầy đủ của trường ngân hàng nếu NER chỉ nhận một phần. Ghi nguồn `bank_field`, `ner` hoặc `bank_field+ner`; nguồn cuối chỉ dùng khi NER nhận đúng cả tên đó. Ưu tiên trường ngân hàng, rồi PERSON, rồi ORGANIZATION nếu không có PERSON. Có nhiều tên thì `extracted_name` để trống để người dùng chọn.
+5. Tên giúp tạo tập ứng viên qua posting `name:` và RRF. `matched_extracted_names` trong evidence ghi những tên trùng toàn bộ bí danh đã học sau khi chuẩn hóa chữ. NER không trực tiếp cộng điểm customer/auto-accept, không tạo ID mới, không bỏ qua mâu thuẫn số hay khách hàng cạnh tranh. Các điều kiện chấp nhận hiện có vẫn kiểm tra nội dung và định danh riêng.
+6. Lưu thông tin trích tên trong JSONL kết quả ngoài PostgreSQL, hiển thị trên giao diện và xuất CSV. Chỉ khi con người xác nhận mã/tên mới gọi luồng học thông thường.
+
+#### Cấu hình và vận hành
+
+Cài các phụ thuộc cập nhật bằng `python -m pip install -r requirements.txt` trong môi trường Python đang chạy ứng dụng, rồi khởi động lại dịch vụ. Trên Linux có thể dùng `python3` nếu đó là lệnh Python của môi trường; Windows dùng Python trong venv như hướng dẫn cài đặt.
+
+| Biến | Mặc định | Ý nghĩa |
+| --- | --- | --- |
+| `NER_ENABLED` | `true` | Bật nhận diện tên trong đối soát. `false` vẫn đọc trường tên MB theo cấu trúc. |
+| `NER_MODEL` | `NlpHUST/ner-vietnamese-electra-base` | Mô hình token classification có nhãn PERSON/PER và tokenizer nhanh. |
+| `NER_REVISION` | `main` | Revision trên Hugging Face; có thể ghim commit để vận hành ổn định. |
+| `NER_MODEL_CACHE` | `runtime/models/ner` | Thư mục cache, dùng được trên Windows/Linux. |
+| `NER_DEVICE` | `cpu` | Thiết bị chạy NER. |
+| `NER_MIN_SCORE` | `0.85` | Ngưỡng nhận thực thể; từ 0 đến 1. |
+| `NER_BATCH_SIZE` | `8` | Số nội dung mỗi nhóm; từ 1 đến 32. |
+
+Mô hình tải lười ở lần đối soát đầu tiên; chỉ tải trọng số/tokenizer, nội dung chuyển tiền được xử lý tại máy chủ ứng dụng. Theo [danh sách tệp chính thức](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base/tree/main), tệp `model.safetensors` khoảng **532 MB**. Đây là kích thước trọng số tải xuống, không phải RAM khi chạy: RAM còn có encoder embedding, tensor trung gian và các phần khác của ứng dụng. Chưa đo RAM trong repository cho cấu hình này. Mô hình giữ trong bộ nhớ sau khi tải; cache thực thể tối đa 2.048 nội dung và xử lý theo nhóm.
+
+Lần tải đầu cần kết nối để lấy model; những lần sau dùng cache. Code yêu cầu trọng số safetensors, không chạy remote code hoặc Java. NER tải/chạy lỗi sẽ ghi cảnh báo kỹ thuật và dùng trường ngân hàng nếu có; các bước đối soát còn lại tiếp tục. Nếu tải model thất bại, xử lý nguyên nhân kết nối/phụ thuộc/cấu hình rồi khởi động lại để thử tải lại. Nếu một nhóm suy luận lỗi, thử từng nội dung; lỗi một nội dung không làm dừng cả tệp. Nút dừng tác vụ được kiểm tra giữa các nhóm; không ngắt giữa chừng một lần tải hoặc suy luận đang chạy.
+
+Tệp kết quả cũ chỉ bổ sung tên từ bố cục ngân hàng khi đọc, không tự tải NER hoặc phân loại lại. Kỳ thanh toán được đọc riêng trong `app/payment_period.py`, hỗ trợ trường `MM/YYYY` đứng giữa dấu chấm khi có ngữ cảnh tiền nước và trường kỳ MB hợp lệ; không lấy ngày giờ trong mã giao dịch làm kỳ.
 
 ## 6. Reranking theo từng mẫu
 
