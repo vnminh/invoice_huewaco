@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core import Core
 from app.db import default_url, make_engine
 from app.knowledge import import_confirmed
+from app.name_extraction import NameExtractor
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -19,6 +20,6 @@ if __name__ == '__main__':
         parser.error('Learning uses your initialized PostgreSQL database')
     engine = make_engine(url)
     try:
-        print(import_confirmed(engine, Core(), args.train, args.batch_size, lambda c: print(c, flush=True)))
+        print(import_confirmed(engine, Core(name_extractor=NameExtractor()), args.train, args.batch_size, lambda c: print(c, flush=True)))
     finally:
         engine.dispose()

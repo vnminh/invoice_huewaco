@@ -106,7 +106,8 @@ Mặc định tối đa 40 mẫu được rerank, cấu hình bằng `CANDIDATE_
 4. **Chi tiết có cấu trúc:** `code:` cho mã chữ/số và `detail:` cho chữ ký nội dung thanh toán.
 5. **Người trả tiền:** `payer:` cho tài khoản/thẻ, tách khỏi định danh khách hàng.
 6. **Tên trích từ nội dung:** NER hoặc trường tên ngân hàng tạo đường `name_entity`, tra `name:` trong các bí danh đã học.
-7. **Tìm gần đúng:** postings theo từ/tên/số/vector buckets, vector cosine, full-text, trigram template và trigram tên khách hàng.
+7. **Bố cục mẫu dùng chung:** `shared_template` tra posting `template:<hash>` của bố cục đã tách tên hợp lệ; số riêng vẫn giữ theo liên kết khách hàng.
+8. **Tìm gần đúng:** postings theo từ/tên/số/vector buckets, vector cosine, full-text, trigram template và trigram tên khách hàng.
 
 Tìm thấy một tài khoản hoặc mã không làm dừng các đường khác. Mỗi đường postings gom theo **pattern_id trước khi LIMIT**, nên mẫu khớp nhiều token không chiếm nhiều vị trí. Ngân sách mỗi đường là `min(500, max(32, 3 × CANDIDATE_LIMIT))`, mặc định 120 mẫu. Khi chưa giới hạn vào một khách hàng, mỗi đường giữ tối đa 4 mẫu/khách hàng. Đường vector đọc trước tối đa 4 lần ngân sách rồi áp dụng giới hạn này; HNSW vẫn là tìm kiếm gần đúng, không bảo đảm tìm đủ mọi đối thủ.
 
@@ -123,6 +124,7 @@ retrieval_score(pattern) = Σ channel_weight / (60 + rank_in_channel)
 | Mã chữ/số/chi tiết thanh toán | 3 |
 | Tài khoản/thẻ trả tiền | 2 |
 | Tên trích từ nội dung (`name_entity`) | 2 |
+| Bố cục mẫu dùng chung (`shared_template`) | 2 |
 | Từ khóa, vector, full-text, trigram, tên | 1 mỗi đường |
 
 RRF cộng thứ hạng, tránh cộng trực tiếp điểm posting, cosine và trigram có thang điểm khác nhau. Công thức dựa trên [bài báo RRF gốc](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf); trọng số và các giới hạn là lựa chọn của ứng dụng, chưa được hiệu chỉnh bằng benchmark mới.
@@ -152,7 +154,7 @@ Cosine cao chỉ hỗ trợ tìm/xếp hạng nội dung. Nó không chứng min
 
 `app/name_extraction.py` dùng [NlpHUST/ner-vietnamese-electra-base](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base), một mô hình token classification tiếng Việt dựa trên ELECTRA, huấn luyện NER trên VLSP 2018. Đây là mô hình nhận diện thực thể, không phải LLM sinh văn bản. [Cấu hình chính thức](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base/blob/main/config.json) có nhãn PERSON và ORGANIZATION; bộ trích chỉ nhận hai loại này khi điểm đạt ngưỡng. Điểm NER là điểm của thực thể, không phải độ tin cậy ghép khách hàng. Chất lượng trên nội dung ngân hàng, đặc biệt tên không dấu, cần đánh giá trên dữ liệu thực tế; chưa có benchmark mới cho thay đổi này.
 
-NER chỉ được gọi trong **đối soát**, tách khỏi `Core.normalize()`, `prepare_batch()` và `learn()`. Bộ chuẩn hóa số, semantic text, fingerprint, metadata `feature_extractor` và schema giữ nguyên. Không cần SQL hoặc học lại kho chỉ để bật NER. Luồng học vẫn bỏ ngày/kỳ theo quy tắc hiện có.
+NER được dùng trong **đối soát** và **học dữ liệu đã xác nhận**, tách khỏi `Core.normalize()` và phần chuẩn hóa số/ngày của `prepare_batch()`. NER không đổi bộ chuẩn hóa số, semantic text, fingerprint hoặc metadata `feature_extractor`; không cần SQL riêng để bật NER. Schema mẫu dùng chung là thay đổi độc lập và cần SQL theo hướng dẫn nâng cấp. Luồng học vẫn bỏ ngày/kỳ theo quy tắc hiện có; NER chỉ bổ sung bí danh riêng.
 
 Các bước trích và sử dụng tên:
 
@@ -161,7 +163,24 @@ Các bước trích và sử dụng tên:
 3. Chạy token-classification theo nhóm, tokenizer nhanh và cửa sổ chồng lấn cho nội dung dài. Lấy tên bằng offset từ **văn bản gốc**, không lấy chuỗi token đã sửa, không sinh thêm dấu hay ký tự. Lọc tên có chữ số, tên đơn vị nhận tiền, tên quá dài/ngắn và kết quả dưới ngưỡng.
 4. Giữ tên đầy đủ của trường ngân hàng nếu NER chỉ nhận một phần. Ghi nguồn `bank_field`, `ner` hoặc `bank_field+ner`; nguồn cuối chỉ dùng khi NER nhận đúng cả tên đó. Ưu tiên trường ngân hàng, rồi PERSON, rồi ORGANIZATION nếu không có PERSON. Có nhiều tên thì `extracted_name` để trống để người dùng chọn.
 5. Tên giúp tạo tập ứng viên qua posting `name:` và RRF. `matched_extracted_names` trong evidence ghi những tên trùng toàn bộ bí danh đã học sau khi chuẩn hóa chữ. NER không trực tiếp cộng điểm customer/auto-accept, không tạo ID mới, không bỏ qua mâu thuẫn số hay khách hàng cạnh tranh. Các điều kiện chấp nhận hiện có vẫn kiểm tra nội dung và định danh riêng.
-6. Lưu thông tin trích tên trong JSONL kết quả ngoài PostgreSQL, hiển thị trên giao diện và xuất CSV. Chỉ khi con người xác nhận mã/tên mới gọi luồng học thông thường.
+6. Lưu thông tin trích tên của đối soát trong JSONL ngoài PostgreSQL, hiển thị trên giao diện và xuất CSV. Khi nhập dữ liệu có IDKH đã xác nhận, thêm/sửa mẫu hoặc xác nhận trên web, `learn_names()` có thể bổ sung một tên vào bảng `customer_aliases` của khách hàng đó.
+
+#### Học bí danh và chặn bằng chứng tên yếu
+
+Chỉ gắn bí danh khi bộ trích chọn được **một tên duy nhất**. Không gắn tất cả tên khi có nhiều người được nhắc đến, không dùng tên để tạo mã khách hàng và không tự đổi `canonical_name`. Tên gốc vẫn được giữ, khóa bí danh bỏ dấu và chuẩn hóa khoảng trắng. Bí danh trùng không tạo dòng thứ hai.
+
+`customer_aliases.confidence` phân biệt hai mức:
+
+- **1.0:** tên/bí danh do con người xác nhận qua tệp hoặc ô tên trên giao diện.
+- **Dưới 1.0:** bí danh trích tự động; NER dùng điểm thực thể nhưng giới hạn tối đa 0.95, trường MB chưa được NER nhận diện dùng 0.8. Không nâng tự động lên 1.0 chỉ vì gặp lại nhiều lần.
+
+Bí danh tự động được lập posting `name:` cho các mẫu của khách hàng, giúp retrieval. Nó không được tính như alias đã xác nhận trong `customer_score` hoặc điều kiện nâng điểm theo tên. Khi người dùng nhập/chọn đúng tên này rồi xác nhận, `ensure_alias()` có thể nâng lên 1.0. Có thể xem bí danh/độ tin cậy ở bảng **Tên / bí danh khách hàng**.
+
+Với tên đã xác nhận xuất hiện trong giao dịch, hệ thống tra chủ sở hữu tên trên **toàn kho**, gồm cả hồ sơ ngoài tập ứng viên và bí danh tự động. Chỉ tên thuộc duy nhất khách hàng đang xét mới hỗ trợ feature khách hàng/điều kiện tên + chi tiết riêng. Tên trùng nhiều hồ sơ không nâng điểm này; ID/hợp đồng/số đầy đủ vẫn được kiểm tra độc lập. Evidence có `unique_confirmed_aliases` và `alias_owners` để đối chiếu.
+
+Trước khi học, mã khách hàng ghi rõ trong nội dung phải thống nhất với mã được xác nhận; nhiều mã khác nhau bị từ chối học. Hợp đồng đã được học cho khách hàng khác cũng bị chặn khi nhãn mới không thuộc các chủ sở hữu đã biết. Lỗi được rollback riêng dòng, không tạo khách hàng/bí danh/receipt/mẫu dở dang. Người dùng kiểm tra dữ liệu hoặc sửa kiến thức sai trước khi học lại. Số thẻ/tài khoản không bị tự coi là CUSTOMER_ID chỉ để qua kiểm tra này.
+
+Import chuẩn bị NER trước transaction ghi và xử lý tối đa 32 dòng mỗi đợt. Receipt tiếp tục chống tăng lần học trùng; khi nội dung đã học, hệ thống vẫn có thể bổ sung bí danh còn thiếu trước khi trả `learned=False`. Metadata import có chữ ký `alias_extractor` theo cấu hình NER. Có thể nhập lại tệp đã học ở phiên bản trước để bổ sung bí danh mà không tăng `seen_count` của mẫu/số. Tệp hoàn tất với cùng chữ ký và không có lỗi tiếp tục được bỏ qua. Nếu lần nhập có NER chưa sẵn sàng, cho phép thử lại sau khi sửa cấu hình/phụ thuộc và khởi động lại; không bắt buộc xóa kiến thức.
 
 #### Cấu hình và vận hành
 
@@ -169,7 +188,7 @@ Cài các phụ thuộc cập nhật bằng `python -m pip install -r requiremen
 
 | Biến | Mặc định | Ý nghĩa |
 | --- | --- | --- |
-| `NER_ENABLED` | `true` | Bật nhận diện tên trong đối soát. `false` vẫn đọc trường tên MB theo cấu trúc. |
+| `NER_ENABLED` | `true` | Bật nhận diện tên trong đối soát và học bí danh. `false` vẫn đọc trường tên MB theo cấu trúc. |
 | `NER_MODEL` | `NlpHUST/ner-vietnamese-electra-base` | Mô hình token classification có nhãn PERSON/PER và tokenizer nhanh. |
 | `NER_REVISION` | `main` | Revision trên Hugging Face; có thể ghim commit để vận hành ổn định. |
 | `NER_MODEL_CACHE` | `runtime/models/ner` | Thư mục cache, dùng được trên Windows/Linux. |
@@ -177,7 +196,7 @@ Cài các phụ thuộc cập nhật bằng `python -m pip install -r requiremen
 | `NER_MIN_SCORE` | `0.85` | Ngưỡng nhận thực thể; từ 0 đến 1. |
 | `NER_BATCH_SIZE` | `8` | Số nội dung mỗi nhóm; từ 1 đến 32. |
 
-Mô hình tải lười ở lần đối soát đầu tiên; chỉ tải trọng số/tokenizer, nội dung chuyển tiền được xử lý tại máy chủ ứng dụng. Theo [danh sách tệp chính thức](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base/tree/main), tệp `model.safetensors` khoảng **532 MB**. Đây là kích thước trọng số tải xuống, không phải RAM khi chạy: RAM còn có encoder embedding, tensor trung gian và các phần khác của ứng dụng. Chưa đo RAM trong repository cho cấu hình này. Mô hình giữ trong bộ nhớ sau khi tải; cache thực thể tối đa 2.048 nội dung và xử lý theo nhóm.
+Mô hình tải lười khi lần đầu cần trích tên trong học hoặc đối soát; chỉ tải trọng số/tokenizer, nội dung chuyển tiền được xử lý tại máy chủ ứng dụng. Theo [danh sách tệp chính thức](https://huggingface.co/NlpHUST/ner-vietnamese-electra-base/tree/main), tệp `model.safetensors` khoảng **532 MB**. Đây là kích thước trọng số tải xuống, không phải RAM khi chạy: RAM còn có encoder embedding, tensor trung gian và các phần khác của ứng dụng. Chưa đo RAM trong repository cho cấu hình này. Mô hình giữ trong bộ nhớ sau khi tải; cache thực thể tối đa 2.048 nội dung và xử lý theo nhóm.
 
 Lần tải đầu cần kết nối để lấy model; những lần sau dùng cache. Code yêu cầu trọng số safetensors, không chạy remote code hoặc Java. NER tải/chạy lỗi sẽ ghi cảnh báo kỹ thuật và dùng trường ngân hàng nếu có; các bước đối soát còn lại tiếp tục. Nếu tải model thất bại, xử lý nguyên nhân kết nối/phụ thuộc/cấu hình rồi khởi động lại để thử tải lại. Nếu một nhóm suy luận lỗi, thử từng nội dung; lỗi một nội dung không làm dừng cả tệp. Nút dừng tác vụ được kiểm tra giữa các nhóm; không ngắt giữa chừng một lần tải hoặc suy luận đang chạy.
 
@@ -218,6 +237,7 @@ Mẫu và giao dịch được so bằng sequence vai trò/định dạng, khôn
 - Nếu số trần đã xác nhận trong mẫu cũ bị mất, đổi giá trị/vị trí/vai trò, tài khoản hoặc nội dung giống không được dùng để vượt qua mâu thuẫn. Ngoại lệ: giao dịch đã có IDKH rõ ràng khớp duy nhất với hồ sơ, nên không cần dùng số trần cũ để chứng minh khách hàng.
 - Kiểm tra các chủ sở hữu đã xác nhận trên toàn kho trước khi LIMIT ứng viên. Ví dụ IDKH thuộc A nhưng hợp đồng hoặc mã chữ/số đã xác nhận thuộc B → manual 0%, không để một đường tìm kiếm che khuất mâu thuẫn. Token dùng chung có thể hỗ trợ tìm kiếm nhưng không tự trở thành bằng chứng duy nhất.
 - Tài khoản/thẻ dùng chung không đủ để xác lập khách hàng.
+- Với gợi ý thu hộ, nhãn proxy, bố cục có nhiều khách hàng trên toàn kho, hoặc cả hai phía còn unknown, cần bằng chứng số riêng: ID rõ ràng, hợp đồng duy nhất, token khách hàng đã xác nhận, hoặc mã chữ/số duy nhất. Tên/tài khoản trung gian/bố cục không đủ để vượt điều kiện này. Nhãn self cũng không bỏ qua mâu thuẫn hay kiểm tra thứ tự số.
 - Tên tổ chức chung hoặc template chuyển tiền phổ biến không đủ để xác định đồng hồ.
 - Một giao dịch có nhiều mã khách hàng cần phân bổ thủ công; không tự chọn một mã trong danh sách.
 - ID rõ ràng nhưng không có trong knowledge → khách hàng rỗng, điểm 0%, kiểm tra thủ công.
@@ -228,9 +248,9 @@ Sau khi chấm các mẫu, hệ thống giữ **mẫu tốt nhất của mỗi k
 
 Mặc định `AUTO_THRESHOLD=0.90`, `REVIEW_THRESHOLD=0.60`, `MATCH_MARGIN=0.08`. Các guard có thể hạ điểm dưới vùng duyệt hoặc chuyển về manual 0%, nên không chỉ kiểm tra một ngưỡng tổng. Định danh mâu thuẫn vẫn phải manual nếu quản trị viên giảm ngưỡng; không dùng một mức trần cố định cho phép vượt guard khi thay cấu hình. Điểm là mức bằng chứng theo quy tắc, không phải xác suất đã hiệu chuẩn.
 
-Kết quả chứa `retrieval` (phương pháp, số mẫu/khách hàng, số mẫu theo đường tìm), `retrieval_sources` (đường nào tìm thấy mẫu được chọn), `confirmed_identifier_owners`, `unique_confirmed_customer_tokens`, `identifier_guards`, `numeric_comparison`, `runner_up`, `score_margin` và `required_score_margin`. Giao diện giải thích bằng tiếng Việt, kèm mẫu gốc, nguồn dữ liệu và bảng đối chiếu số. Đây là bằng chứng đã kiểm tra, không phải lời suy luận do LLM sinh.
+Kết quả chứa `retrieval` (phương pháp, số mẫu/khách hàng, số mẫu theo đường tìm), `retrieval_sources` (đường nào tìm thấy mẫu được chọn), `confirmed_identifier_owners`, `unique_confirmed_customer_tokens`, `identifier_guards`, `numeric_comparison`, `runner_up`, `score_margin` và `required_score_margin`, `shared_template_id`, `shared_template_customer_count`, `numeric_customer_evidence` và `payment_mode_evidence`. Kiểu thanh toán lấy từ nguồn có nhãn hoặc lịch sử đã xác nhận sau khi khớp chính xác bố cục và số riêng đủ mạnh. Protocol chỉ gợi ý; unknown không tự thành self. Admin gán loại mặc định cho mẫu và có thể sửa từng liên kết. Giao diện giải thích bằng tiếng Việt, kèm mẫu gốc, nguồn dữ liệu và bảng đối chiếu số. Đây là bằng chứng đã kiểm tra, không phải lời suy luận do LLM sinh.
 
-Thay đổi retrieval và guard này không đổi encoder, extractor hoặc schema; không cần học lại hay chạy migration. Theo yêu cầu người dùng, chưa chạy kiểm thử/benchmark phiên bản này. Chưa có số liệu mới để kết luận precision/F1 đã tăng; guard chặt hơn có thể làm nhiều dòng cần duyệt và tìm nhiều đường có thể tăng thời gian xử lý. Cần đánh giá bằng dữ liệu có nhãn tách khỏi kho học trước khi điều chỉnh trọng số/ngưỡng cho triển khai thực tế.
+Bản hiện tại giữ encoder/extractor, nhưng thêm schema mẫu chung: kho knowledge-only cũ cần migration 003; database mới chỉ chạy create_current.sql. Không phải dựng lại embedding. Chi tiết [mẫu chung, nhãn thu hộ/tự trả và SQL](shared-payment-templates.md). Theo yêu cầu người dùng, chưa chạy kiểm thử/benchmark phiên bản này. Chưa có số liệu mới để kết luận precision/F1 đã tăng; guard chặt hơn có thể làm nhiều dòng cần duyệt và tìm nhiều đường có thể tăng thời gian xử lý. Cần đánh giá bằng dữ liệu có nhãn tách khỏi kho học trước khi điều chỉnh trọng số/ngưỡng cho triển khai thực tế.
 
 ## 8. Xác nhận, sửa manual và học ngay
 
