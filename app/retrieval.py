@@ -12,7 +12,7 @@ CHANNEL_LABELS = {
     'identity': 'hợp đồng hoặc số khách hàng đã xác nhận',
     'structured': 'mã chữ/số hoặc chi tiết thanh toán', 'payer': 'tài khoản trả tiền',
     'name_entity': 'tên trích từ nội dung',
-    'shared_template': 'bố cục mẫu dùng chung',
+    'shared_template': 'bố cục mẫu giao dịch',
     'postings': 'từ khóa và tên đã học', 'semantic': 'nội dung tương đồng',
     'full_text': 'tìm kiếm nội dung', 'trigram': 'nội dung gần giống',
     'customer_name': 'tên khách hàng',

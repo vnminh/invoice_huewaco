@@ -63,7 +63,7 @@ Mở **http://127.0.0.1:8000**; API tại /docs. Chạy một worker vì tác v�
 Tài liệu chi tiết:
 
 - [Hướng dẫn quản trị](docs/admin-guide.md): đối soát, manual, học sau xác nhận, nhiều mẫu, CSV.
-- [Bố cục Excel và xuất theo sheet](docs/excel-layout-and-export.md): hai mẫu chuẩn, nhận diện tổng quát, Excel kết quả và ZIP CSV theo sheet.
+- [Bố cục Excel và xuất theo sheet](docs/excel-layout-and-export.md): xem hai bố cục ngay trên UI, nhận diện tổng quát, Excel kết quả và ZIP CSV theo sheet.
 - [Tìm kiếm, so khớp và học](docs/matching-and-learning.md): số theo thứ tự, retrieval, feature/trọng số, guard precision, chống trùng và phục hồi.
 - [Mẫu chung và thu hộ/tự trả](docs/shared-payment-templates.md): quan hệ nhiều khách hàng, số riêng theo liên kết, gán loại thủ công trên web và SQL mới.
 - [Schema database](docs/database-schema.md): 11 bảng, quan hệ, trường, chỉ mục, cách lưu mẫu/hóa đơn/số và quyền quản lý.
@@ -78,15 +78,15 @@ NER **NlpHUST/ner-vietnamese-electra-base** trích tên trong đối soát và b
 
 Retrieval kết hợp posting theo mã/tên/người trả tiền/hợp đồng, full-text, trigram và pgvector HNSW bằng thứ hạng RRF; giữ nhiều khách hàng trong tập ứng viên và rerank tối đa 40 mẫu. Không dừng ở tài khoản/mã đầu tiên. Sau đó lấy mẫu tốt nhất mỗi khách hàng để tránh các mẫu cùng khách hàng cạnh tranh giả. Điểm hiển thị là điểm bằng chứng, không phải xác suất đã hiệu chuẩn.
 
-HD là **hợp đồng**; TKThe là thẻ người trả tiền. Số giữ chuỗi đầy đủ, thứ tự, vai trò, định dạng và số 0 đầu; không cắt chuỗi dài. Chủ sở hữu định danh được kiểm tra trên toàn kho, độc lập với giới hạn ứng viên. Hợp đồng/mã xung đột, mã/số cơ sở chưa khớp đủ và token/tài khoản dùng chung không đủ để ghép tự động. Hai khách hàng có điểm đủ cao và chênh dưới `MATCH_MARGIN=0.08` phải duyệt. Nhãn ko được bỏ qua khi học.
+HD là **hợp đồng**; TKThe là thẻ người trả tiền. Số giữ chuỗi đầy đủ, thứ tự, vai trò, định dạng và số 0 đầu; không cắt chuỗi dài. Chủ sở hữu định danh được kiểm tra trên toàn kho, độc lập với giới hạn ứng viên. Một HD có thể liên kết nhiều IDKH. IDKH rõ ràng và đã biết được ưu tiên trước HD; IDKH chưa biết vẫn trả thủ công 0%. HD dùng chung không đủ xác định khách hàng. Mã/số cơ sở chưa khớp đủ và token/tài khoản dùng chung không đủ để ghép tự động. Hai khách hàng có điểm đủ cao và chênh dưới `MATCH_MARGIN=0.08` phải duyệt. Nhãn ko được bỏ qua khi học.
 
-Admin có thể gán **Thu hộ / Tự trả / Chưa xác định** ở mẫu chung và chỉnh ngoại lệ theo liên kết. Loại mẫu là mặc định khi học liên kết mới không có nhãn riêng. Tên ngân hàng, protocol hoặc bố cục lặp lại chỉ là gợi ý; không tự coi unknown là self. Khi chưa có nhãn hoặc dùng mẫu chung/thu hộ, không ghép chỉ theo tên hay tài khoản trung gian.
+Admin có thể gán **Thu hộ / Tự trả / Chưa xác định** ở mẫu chung, chỉnh ngoại lệ theo liên kết hoặc cập nhật toàn bộ mẫu sau tìm kiếm/lọc, kể cả các trang chưa hiển thị. Loại mẫu là mặc định khi học liên kết mới không có nhãn riêng. Tên ngân hàng, protocol hoặc bố cục lặp lại chỉ là gợi ý; không tự coi unknown là self. Khi chưa có nhãn hoặc dùng mẫu chung/thu hộ, không ghép chỉ theo tên hay tài khoản trung gian.
 
 Giới hạn upload 100 MB, XLSX giải nén tối đa 2 GB; đọc streaming, chia đợt và cache embedding có giới hạn. Dừng tại checkpoint, giữ các đợt đã commit. Knowledge ghi tên encoder/extractor để chặn trộn cấu hình không tương thích.
 
-Đối soát quét mọi sheet, nhận diện cột theo tiêu đề của từng bố cục; không cố định BIDV. CSV kết quả/đã học giữ sheet, ngân hàng/kênh và tham chiếu. Tác vụ hiển thị số dòng từng sheet và sheet chưa nhận diện được. Các dòng chưa rõ chiều ghi có/ghi nợ được đưa về kiểm tra thủ công 0%; xem chi tiết bố cục trong hướng dẫn quản trị.
+Học nhận diện các cột IDKH/MaKH/Mã KH/Mã khách hàng theo từng sheet. Cột ID đơn lẻ chỉ được coi là mã khách hàng khi có cột tên khách hàng rõ ràng và nội dung giao dịch. Đối soát quét mọi sheet, nhận diện cột theo tiêu đề của từng bố cục; không cố định BIDV. CSV kết quả/đã học giữ sheet, ngân hàng/kênh và tham chiếu. Tác vụ hiển thị số dòng từng sheet và sheet chưa nhận diện được. Các dòng chưa rõ chiều ghi có/ghi nợ được đưa về kiểm tra thủ công 0%; xem chi tiết bố cục trong hướng dẫn quản trị.
 
-UI có hai tệp bố cục chuẩn tải xuống khi nhận diện chưa thành công; sheet thiếu/trùng tiêu đề được báo kèm hướng dẫn. Excel kết quả chia theo sheet đầu vào; kết quả CSV và CSV đã học đóng ZIP, mỗi sheet một CSV. Xuất giữ mã dưới dạng chuỗi. Khi học, mã khách hàng ghi rõ trong nội dung khác nhãn hoặc hợp đồng đã thuộc hồ sơ khác bị chặn và báo lỗi riêng dòng.
+UI có link xem bố cục cho học và đối soát, chỉ mở ngay trên trang; không tải mẫu hay xuất dữ liệu đã học. Excel kết quả chia theo sheet đầu vào; CSV kết quả đóng ZIP, mỗi sheet một CSV. Xuất giữ mã dưới dạng chuỗi. Khi học, mã khách hàng ghi rõ trong nội dung khác nhãn bị chặn và báo lỗi riêng dòng; HD đã liên kết khách hàng khác vẫn được phép học cho IDKH đã xác nhận.
 
 Kết quả đối soát có cột **Kỳ thanh toán**, lấy tháng/năm hóa đơn nước từ nội dung và tách khỏi ngày giờ chuyển khoản. Không đủ căn cứ thì hiển thị **Chưa xác định**. CSV kết quả thêm `payment_period`, `extracted_name`, `extracted_names`, `name_extraction_status`; kỳ vẫn không được đưa vào đặc trưng học hoặc PostgreSQL. CSV học thêm ba cột tùy chọn về thu hộ/tự trả, tương thích tệp cũ.
 

@@ -142,6 +142,6 @@ Sau restart, tác vụ nhập/lọc đang chạy chuyển thành gián đoạn. 
 - **Xóa kết quả hiển thị** chỉ làm trống bảng trên trang.
 - **Xóa tệp làm việc** ở Tác vụ xử lý xóa job/result/review của tác vụ đã dừng, giữ knowledge.
 - **Xóa mẫu/khách hàng** mới xóa knowledge PostgreSQL, có xác nhận.
-- CSV kết quả dùng đối soát. CSV đã học chỉ gồm dòng xác nhận và đã học để sao lưu/chuyển knowledge.
+- CSV kết quả dùng đối soát; không xuất riêng dữ liệu đã học. CSV đã xác nhận của người dùng hoặc CSV lưu từ phiên bản cũ vẫn nhập được.
 
 Không tự đặt thời hạn xóa kết quả. Quản trị viên tải CSV rồi xóa tệp không còn cần. Không chạy nhiều Uvicorn worker cùng ghi một working directory.

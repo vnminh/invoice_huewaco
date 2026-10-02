@@ -40,7 +40,7 @@ Không suy thu hộ chỉ từ tên sheet, tài khoản ngân hàng hoặc số 
 
 ## So khớp để tránh chọn nhầm khách hàng
 
-1. Đối chiếu ID/hợp đồng/mã đã xác nhận trên toàn kho; mâu thuẫn hoặc ID chưa biết vẫn trả thủ công 0%.
+1. Đối chiếu IDKH trước trên toàn kho; chưa biết/nhiều hồ sơ vẫn thủ công 0%. Một HD được phép có nhiều IDKH. Khi IDKH rõ ràng đã biết, HD không phủ định IDKH; các mã định danh khác vẫn kiểm tra mâu thuẫn. Không có IDKH thì HD dùng chung không đủ xác định duy nhất khách hàng.
 2. Đường `shared_template` tìm bố cục chung qua posting `template:<hash>`, trọng số RRF 2. Đây là đường tìm ứng viên, không phải bằng chứng chấp nhận.
 3. Rerank **liên kết khách hàng**, dùng ví dụ, số đầy đủ, vai trò/định dạng và thứ tự của chính liên kết đó.
 4. Đếm khách hàng của mẫu chung trên toàn kho bằng `template_id`, không giới hạn trong tập ứng viên.
@@ -55,14 +55,20 @@ Evidence trả `shared_template_id`, `shared_template`, `shared_template_custome
 
 Trong **Quản lý kiến thức**:
 
-1. Chọn **Mẫu dùng chung** để tìm mẫu, xem bố cục, số khách hàng/liên kết, đặt tên quản lý hoặc ghi chú.
+1. Chọn **Mẫu giao dịch** để tìm mẫu, xem bố cục, số khách hàng/liên kết, đặt tên quản lý hoặc ghi chú.
 2. Chọn **Xem khách hàng dùng mẫu** để mở danh sách liên kết có phân trang.
 3. Trong một liên kết, xem/sửa ví dụ riêng, đối chiếu số riêng hoặc **Lưu kiểu thanh toán** chỉ cho liên kết đó.
 4. Ở mẫu chung, phần **Đánh dấu thu hộ / tự trả cho mẫu** mở sẵn. Chọn **Thu hộ qua ngân hàng / ví**, **Khách hàng tự trả** hoặc **Chưa xác định**; điền loại và tên đơn vị thu hộ nếu có. Đánh dấu xác nhận phạm vi rồi bấm **Lưu loại của mẫu & áp dụng**. Backend lưu loại mặc định trên mẫu chung và cập nhật toàn bộ liên kết hiện có trong cùng transaction. Khi học liên kết mới cùng mẫu, nếu nguồn không cung cấp nhãn riêng thì dùng mặc định này. Thao tác không trộn số hoặc tăng lần học.
 5. Với ngoại lệ, mở liên kết và **Lưu kiểu thanh toán**: chỉ liên kết này đổi, không đổi loại mặc định của mẫu hay liên kết khác. Nhãn riêng trong tệp hoặc UI được ưu tiên; chọn unknown rõ ràng cũng được giữ. Gán lại loại toàn mẫu sẽ thay cả các ngoại lệ hiện có, nên cần kiểm tra checkbox phạm vi.
 6. Xóa liên kết chỉ xóa số/posting riêng của liên kết đó. Mẫu chung và các khách hàng khác được giữ. Chỉ được xóa mẫu chung khi không còn liên kết.
 
-Khi **Xác nhận & học**, UI cho chọn kiểu thanh toán và đơn vị thu hộ. Thông tin được ghi cùng xác nhận và có trong các tệp xuất. CSV học giữ 9 cột cũ và thêm 3 cột tùy chọn về kiểu/đơn vị; CSV cũ thiếu những cột này vẫn đọc được. Receipt không phụ thuộc nhãn proxy/self để tránh tăng lần học khi chỉ chỉnh loại. Lựa chọn **Theo mẫu đã xác nhận (nếu có)** không đoán từ nội dung; dùng nhãn đã lưu hoặc giữ unknown nếu chưa có. Kết quả duyệt và CSV ghi loại thực tế đã lưu trên liên kết.
+### Xác nhận kiểu thanh toán hàng loạt sau tìm kiếm/lọc
+
+Danh sách **Mẫu giao dịch** có bộ lọc `payment_mode` và nút **Cập nhật tất cả mẫu đang lọc**. Nút áp dụng cho toàn bộ kết quả, không chỉ 20 mẫu của trang hiện tại. Hộp xác nhận hiển thị số mẫu, số liên kết, chuỗi tìm kiếm và loại đang lọc; người dùng phải chọn loại mới và xác nhận phạm vi.
+
+API `POST /knowledge/templates/payment/bulk` nhận `q`, `filter_payment_mode`, `payment_mode`, thông tin đơn vị, `expected_count`, `expected_links` và `confirmed: true`. Cùng hàm query được dùng cho danh sách và bulk; không gửi giới hạn phân trang. Trong transaction có khóa ghi kiến thức, backend kiểm tra số lượng trước khi cập nhật. Phạm vi đổi thì trả 409 để người dùng làm mới. Liên kết được cập nhật trước mẫu, vì việc đổi loại/đơn vị mẫu có thể làm mẫu không còn khớp điều kiện lọc. Các thao tác SQL dùng subquery IDs, không tải toàn kho hoặc nội dung giao dịch vào RAM. Toàn bộ mẫu/liên kết được commit cùng nhau; số, receipts và thống kê học giữ nguyên. Loại mặc định đã lưu tiếp tục áp dụng cho liên kết mới thiếu nhãn riêng.
+
+Khi **Xác nhận & học**, UI cho chọn kiểu thanh toán và đơn vị thu hộ. Thông tin được ghi cùng xác nhận và có trong các tệp xuất. CSV nhập hỗ trợ ba cột tùy chọn về kiểu/đơn vị; tệp cũ thiếu những cột này vẫn đọc được. Bố cục chỉ xem trên UI; không tải mẫu hoặc xuất dữ liệu đã học. Receipt không phụ thuộc nhãn proxy/self để tránh tăng lần học khi chỉ chỉnh loại. Lựa chọn **Theo mẫu đã xác nhận (nếu có)** không đoán từ nội dung; dùng nhãn đã lưu hoặc giữ unknown nếu chưa có. Kết quả duyệt và CSV ghi loại thực tế đã lưu trên liên kết.
 
 ## SQL từ đầu và nâng cấp
 
