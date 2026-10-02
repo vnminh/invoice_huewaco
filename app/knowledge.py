@@ -8,7 +8,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DataError, IntegrityError
 
 from .db import Customer, KnowledgeReceipt, Metadata, Pattern, sessions
-from .excel import ConfirmedCsv, StreamingWorkbook, layout_guidance
+from .excel import ConfirmedCsv, StreamingWorkbook, LAYOUT_VERSION, layout_guidance
 from .core import learning_receipt
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
 
@@ -38,7 +38,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
     key = 'import:' + digest.hexdigest()
     alias_extractor = core.learning_alias_signature()
     summary = {'file': Path(path).name, 'sha256': digest.hexdigest(), 'status': 'running',
-               'alias_extractor': alias_extractor}
+               'alias_extractor': alias_extractor, 'layout_reader': LAYOUT_VERSION}
     with factory.begin() as session:
         record = session.get(Metadata, key)
         if record:
@@ -48,6 +48,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                 if previous.get('feature_extractor') != core.extractor.name or previous.get('embedding_model') != core.embedder.name:
                     raise ValueError('Imported file uses a different model; reimport confirmed history into a fresh database')
                 if (previous.get('alias_extractor') == alias_extractor
+                        and previous.get('layout_reader') == LAYOUT_VERSION
                         and not previous.get('counts', {}).get('errors', previous.get('row_error_count', 0))
                         and not previous.get('counts', {}).get('name_extraction_unavailable', 0)):
                     return {**previous, 'already_imported': True}

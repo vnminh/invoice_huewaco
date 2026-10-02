@@ -15,7 +15,6 @@ flowchart LR
     G --> H[Xác nhận và học]
     H --> I[PostgreSQL: kiến thức đã xác nhận]
     F --> J[CSV kết quả]
-    H --> K[CSV các dòng đã học]
     I --> D
 ```
 
@@ -60,7 +59,7 @@ Giá trị số không được đổi sang float/int, không cắt chuỗi, kh�
 | Vai trò | Cách dùng |
 | --- | --- |
 | CUSTOMER_ID | Định danh khách hàng có ngữ cảnh rõ ràng. |
-| CONTRACT_ID | HD/hợp đồng; phải đối chiếu hợp đồng chính xác. |
+| CONTRACT_ID | HD/hợp đồng; một HD có thể liên kết nhiều IDKH. Khi có IDKH rõ ràng đã biết, ưu tiên IDKH; không có IDKH thì HD chỉ là bằng chứng định danh mạnh khi khớp chính xác và duy nhất. |
 | CARD_ID / ACCOUNT_ID | Thẻ hoặc tài khoản người trả tiền; kiểm tra có dùng chung cho nhiều khách hàng không. |
 | MIXED_CODE / LOCATION_NUMBER | Mã chữ/số, số cơ sở; khác giá trị ở đúng vai trò có thể chặn ghép. |
 | INVOICE_ID / INVOICE_CODE | Thông tin hóa đơn; có thể thay đổi theo khoản thu, không tự xác lập khách hàng. |
@@ -72,6 +71,12 @@ Giá trị số không được đổi sang float/int, không cắt chuỗi, kh�
 `HD` luôn là **hợp đồng**, không phải hóa đơn. Chỉ ngữ cảnh `hóa đơn/invoice` mới là số hóa đơn. `TKThe` là thẻ của người trả tiền, không phải mã khách hàng.
 
 Có một ngoại lệ rõ ràng ở **tra cứu hồ sơ mã khách hàng**: `id_key()` bỏ số 0 đầu để tìm các biến thể mã được xác nhận là cùng hồ sơ, ví dụ `001234` và `1234`. Cơ chế này không áp dụng cho hợp đồng, thẻ, tài khoản hoặc giá trị lưu trong numeric features. Giá trị đầy đủ và mẫu theo từng cách ghi vẫn được giữ và ưu tiên so khớp nguyên văn. Nếu khóa này ánh xạ tới nhiều hồ sơ, đối soát trả manual 0%; học một mã biến thể mới cũng không tự chọn hồ sơ đầu tiên để gộp.
+
+### Quan hệ HD và IDKH
+
+Học không áp ràng buộc một HD chỉ thuộc một khách hàng. Ví dụ `KH:001234 HD:700012` và `KH:005678 HD:700012` có thể được học sau xác nhận; các số lưu trên liên kết riêng. Cột nhãn xác nhận vẫn phải khớp IDKH ghi rõ trong nội dung.
+
+Trong đối soát, IDKH rõ ràng được tra trên toàn kho trước; chưa biết hoặc ánh xạ nhiều hồ sơ vẫn manual 0%, không chuyển sang chọn theo HD. IDKH đã biết duy nhất giới hạn ứng viên và được ưu tiên trước HD, kể cả khi HD chưa liên kết tới khách hàng đó hoặc khác ví dụ đại diện. Không học quan hệ mới trong lúc đối soát. Khi không có IDKH, HD dùng chung không được coi là bằng chứng duy nhất; các chủ sở hữu hợp đồng và các mã khác vẫn được kiểm tra. `customer_id_priority_over_contract`, `shared_contract_customer_ids`, `consistent_new_contracts` trong evidence giải thích việc ưu tiên, tập khách hàng dùng HD và quan hệ chờ xác nhận.
 
 ## 3. Một khách hàng, nhiều mẫu
 
@@ -231,11 +236,11 @@ Các điều kiện nâng điểm vẫn chịu kiểm tra mâu thuẫn và loạ
 Mẫu và giao dịch được so bằng sequence vai trò/định dạng, không dùng một tập số bỏ thứ tự.
 
 - Nếu sequence ổn định trùng và template phù hợp, các tham chiếu biến đổi có thể được thêm/bớt mà vẫn đối chiếu định danh theo đúng vai trò. Giao diện hiển thị cả slot hiện tại và slot lịch sử khi chúng khác nhau.
-- Mã hợp đồng khác nhau chặn ghép tự động.
+- Mã hợp đồng khác nhau hoặc chưa đối chiếu đầy đủ chặn ghép khi không có IDKH rõ ràng đã biết. Khi IDKH khớp duy nhất với hồ sơ, HD không phủ định IDKH; quan hệ HD mới chỉ học sau xác nhận. Các mã chữ/số, số cơ sở và kiểm tra định danh khác vẫn áp dụng.
 - Mã chữ/số hoặc số cơ sở thiếu, thêm, đổi giá trị, đổi vai trò/định dạng hoặc chưa đối chiếu được đúng thứ tự chặn ghép tự động, kể cả khi tài khoản hoặc vector rất giống. Các trường biến đổi như tham chiếu ngân hàng, số hóa đơn và lượng tiêu thụ vẫn được xử lý theo vai trò riêng; không áp dụng quy tắc này cho mọi con số.
 - Token số trần đã được gắn với khách hàng còn phải trùng vị trí tuyệt đối, vai trò, định dạng và giá trị đầy đủ, và có **một chủ sở hữu duy nhất trên toàn kho** mới được nâng điểm như định danh chắc chắn.
 - Nếu số trần đã xác nhận trong mẫu cũ bị mất, đổi giá trị/vị trí/vai trò, tài khoản hoặc nội dung giống không được dùng để vượt qua mâu thuẫn. Ngoại lệ: giao dịch đã có IDKH rõ ràng khớp duy nhất với hồ sơ, nên không cần dùng số trần cũ để chứng minh khách hàng.
-- Kiểm tra các chủ sở hữu đã xác nhận trên toàn kho trước khi LIMIT ứng viên. Ví dụ IDKH thuộc A nhưng hợp đồng hoặc mã chữ/số đã xác nhận thuộc B → manual 0%, không để một đường tìm kiếm che khuất mâu thuẫn. Token dùng chung có thể hỗ trợ tìm kiếm nhưng không tự trở thành bằng chứng duy nhất.
+- Kiểm tra các chủ sở hữu đã xác nhận trên toàn kho trước khi LIMIT ứng viên. Với IDKH rõ ràng, bỏ HD khỏi giao các tập chủ sở hữu vì HD có thể dùng cho nhiều IDKH. Ví dụ IDKH thuộc A nhưng mã chữ/số đã xác nhận thuộc B → manual 0%, không để một đường tìm kiếm che khuất mâu thuẫn. Token dùng chung có thể hỗ trợ tìm kiếm nhưng không tự trở thành bằng chứng duy nhất.
 - Tài khoản/thẻ dùng chung không đủ để xác lập khách hàng.
 - Với gợi ý thu hộ, nhãn proxy, bố cục có nhiều khách hàng trên toàn kho, hoặc cả hai phía còn unknown, cần bằng chứng số riêng: ID rõ ràng, hợp đồng duy nhất, token khách hàng đã xác nhận, hoặc mã chữ/số duy nhất. Tên/tài khoản trung gian/bố cục không đủ để vượt điều kiện này. Nhãn self cũng không bỏ qua mâu thuẫn hay kiểm tra thứ tự số.
 - Tên tổ chức chung hoặc template chuyển tiền phổ biến không đủ để xác định đồng hồ.
@@ -279,7 +284,7 @@ Nếu PostgreSQL commit xong nhưng ghi trạng thái file bị gián đoạn, �
 ### Chống trùng
 
 - Excel xác nhận: receipt từ nội dung, khách hàng, ngày, số tiền và dòng nguồn; file import hoàn tất còn được nhận diện bằng SHA-256 toàn bộ file.
-- Xác nhận trên web / CSV đã học / thêm mẫu trực tiếp: receipt từ nội dung gốc, mã khách hàng chính thức, ngày, số tiền và kênh trả tiền.
+- Xác nhận trên web / CSV đã xác nhận / thêm mẫu trực tiếp: receipt từ nội dung gốc, mã khách hàng chính thức, ngày, số tiền và kênh trả tiền.
 - Hai dòng hoàn toàn trùng các trường trên được xử lý bảo thủ như cùng bằng chứng học. Số lần gặp không tăng giả vì import/export lại.
 - Receipt chỉ lưu hash, khách hàng và kỳ; không lưu toàn bộ lịch sử kết quả lọc.
 
