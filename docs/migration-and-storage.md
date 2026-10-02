@@ -15,7 +15,7 @@ Từ terminal tài khoản Linux của bạn, trong thư mục project:
 sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/create_current.sql
 ```
 
-`sql/create_current.sql` tạo thẳng schema hiện tại gồm 10 bảng kiến thức, kiểu TEXT cho giá trị số/token, digest và đầy đủ chỉ mục. Với database mới, **chỉ chạy file này**, không chạy init → 001 → 002. File không xóa dữ liệu hoặc nâng cấp cấu trúc bảng cũ.
+`sql/create_current.sql` tạo thẳng schema hiện tại gồm 11 bảng kiến thức, kiểu TEXT cho giá trị số/token, digest và đầy đủ chỉ mục. Với database mới, **chỉ chạy file này**, không chạy init → 001 → 002. File không xóa dữ liệu hoặc nâng cấp cấu trúc bảng cũ.
 
 Dùng `<` để shell của bạn đọc file; tiến trình postgres không phải mở file trong thư mục home riêng. Không chạy từ shell postgres nếu tài khoản đó không đọc được project. `-p` cần số port, ví dụ `-p 5432`.
 
@@ -86,7 +86,17 @@ psql -U invoice_app -h 127.0.0.1 -p 5432 -d invoice_filter
 
 CSV xuất cũ là bản lưu ngoài ứng dụng; UI mới không tự nhập lại mọi kết quả cũ. Migration giữ các mẫu đã học. Mẫu mới phân biệt thêm hợp đồng/mã quan trọng; muốn bổ sung biến thể đã bị gộp trước đây, thêm ví dụ đã xác nhận qua quản lý mẫu. Import cùng file hoàn tất vẫn chống trùng, không tự khôi phục knowledge đã cố ý xóa.
 
-`CREATE TABLE IF NOT EXISTS` không cập nhật cấu trúc bảng đã tồn tại: kho cũ cần migration 002. Nếu encoder/extractor khác cấu hình hiện tại, migration không tự chuyển embedding; dùng cấu hình tương thích hoặc kho mới để nhập lại lịch sử đã xác nhận.
+`CREATE TABLE IF NOT EXISTS` không cập nhật cấu trúc bảng đã tồn tại: kho cũ cần migration tương ứng, gồm 002 cho lưu trữ knowledge-only và 003 cho mẫu chung. Nếu encoder/extractor khác cấu hình hiện tại, migration không tự chuyển embedding; dùng cấu hình tương thích hoặc kho mới để nhập lại lịch sử đã xác nhận.
+
+## Nâng cấp kho knowledge-only lên mẫu chung
+
+Nếu kho đã ở phiên bản 002, dừng ứng dụng, sao lưu rồi tự chạy **`sql/migrations/003_shared_templates.sql`**. Trên Windows:
+
+```powershell
+psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "sql/migrations/003_shared_templates.sql"
+```
+
+Linux dùng cùng lệnh TCP, hoặc `sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/migrations/003_shared_templates.sql`. Script bổ sung `payment_templates`, gắn `template_id`, giữ số/vector/receipts và bổ sung loại thu hộ/tự trả. Dữ liệu cũ giữ unknown để admin xác nhận trên UI. Không chạy migration trên database mới đã tạo bằng `create_current.sql`. Chi tiết [schema và quản lý thu hộ](shared-payment-templates.md).
 
 ## Vị trí lưu trữ
 
@@ -109,7 +119,8 @@ Payload JSONL đọc từng dòng, chỉ giữ offset/trạng thái nhỏ trong 
 | Tệp/thư mục | Mục đích |
 | --- | --- |
 | runtime/uploads/UUID/ | Upload tạm, dọn khi tác vụ kết thúc/dừng/lỗi; sự cố process có thể để lại file cần dọn. |
-| runtime/models/ | Cache encoder. |
+| runtime/models/ | Cache encoder và NER theo cấu hình. |
+| runtime/exports/ | Tệp xuất tạm theo sheet; dọn sau khi tải hoàn tất. |
 | runtime/embeddings.sqlite | Cache embedding có giới hạn, không phải lịch sử nghiệp vụ. |
 | runtime/legacy-export-before-002/ | CSV cũ do quản trị viên tự xuất. |
 | reports/ | Báo cáo phát triển, không đưa vào UI người dùng. |

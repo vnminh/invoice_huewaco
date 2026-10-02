@@ -8,3 +8,4 @@ numpy>=1.26,<3
 httpx>=0.28,<1
 sentence-transformers>=3,<6
 transformers>=4.45,<5
+XlsxWriter>=3.2,<4

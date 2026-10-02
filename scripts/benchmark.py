@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.benchmark import run_benchmark
 from app.core import Core
 from app.db import make_engine, default_url
+from app.name_extraction import NameExtractor
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -22,7 +23,7 @@ if __name__ == '__main__':
     engine = make_engine(url)
     try:
         report = run_benchmark(args.raw, args.truth, args.output, batch_size=args.batch_size, progress=progress,
-                               knowledge_engine=engine, core=Core())
+                               knowledge_engine=engine, core=Core(name_extractor=NameExtractor()))
     finally:
         engine.dispose()
     print(report['metrics'])

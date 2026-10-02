@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import os
 
-from sqlalchemy import (JSON, Float, ForeignKey, Index, Integer, String, Text,
+from sqlalchemy import (JSON, CheckConstraint, Float, ForeignKey, Index, Integer, String, Text,
                         UniqueConstraint, create_engine, event)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -80,10 +80,31 @@ class Payer(Base):
     __table_args__ = (UniqueConstraint('customer_id', 'payer_name'),)
 
 
+class PaymentTemplate(Base):
+    __tablename__ = 'payment_templates'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    template_text: Mapped[str] = mapped_column(Text)
+    structure: Mapped[str] = mapped_column(Text)
+    display_name: Mapped[str] = mapped_column(Text, default='')
+    description: Mapped[str] = mapped_column(Text, default='')
+    payment_mode: Mapped[str] = mapped_column(String(16), default='unknown')
+    provider_kind: Mapped[str] = mapped_column(String(16), default='unknown')
+    provider_name: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[str] = mapped_column(String(40), default=now)
+    __table_args__ = (
+        CheckConstraint("payment_mode IN ('unknown', 'proxy', 'self')", name='ck_templates_payment_mode'),
+        CheckConstraint("provider_kind IN ('unknown', 'bank', 'wallet', 'other')", name='ck_templates_provider_kind'))
+
+
 class Pattern(Base):
     __tablename__ = 'transaction_patterns'
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey('customers.id'), index=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey('payment_templates.id'), index=True)
+    payment_mode: Mapped[str] = mapped_column(String(16), default='unknown')
+    provider_kind: Mapped[str] = mapped_column(String(16), default='unknown')
+    provider_name: Mapped[str] = mapped_column(Text, default='')
     payer_id: Mapped[int | None] = mapped_column(ForeignKey('payer_entities.id'), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64))
     normalized_text: Mapped[str] = mapped_column(Text)
@@ -100,7 +121,10 @@ class Pattern(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.2)
     last_seen: Mapped[str] = mapped_column(String(40), default=now)
     last_period: Mapped[str] = mapped_column(String(7), default='')
-    __table_args__ = (UniqueConstraint('customer_id', 'fingerprint'),)
+    __table_args__ = (UniqueConstraint('customer_id', 'fingerprint'),
+                     CheckConstraint("payment_mode IN ('unknown', 'proxy', 'self')", name='ck_patterns_payment_mode'),
+                     CheckConstraint("provider_kind IN ('unknown', 'bank', 'wallet', 'other')", name='ck_patterns_provider_kind'),
+                     Index('ix_patterns_template_customer', 'template_id', 'customer_id'))
 
 
 class NumericSlot(Base):

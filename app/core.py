@@ -7,15 +7,16 @@ import json
 import math
 import re
 
-from sqlalchemy import func, select, text, tuple_, update
+from sqlalchemy import delete, func, select, text, tuple_, update
 
 from .db import (Alias, Customer, HardNegative, KnowledgeReceipt, Metadata,
-                 NumericFeature, NumericSlot, Pattern, Payer, Posting, now)
+                 NumericFeature, NumericSlot, Pattern, PaymentTemplate, Payer, Posting, now)
 from .embedding import Embedder, cosine, vector_buckets
 from .normalize import fold, normalize_text, identity_signature, branch_markers, RuleExtractor
 from .numeric_match import compare_ordered_numbers
 from .name_extraction import name_fields, name_key, structured_name_fields
 from .retrieval import CHANNEL_LABELS, fuse_rankings
+from .payment_templates import payment_hint, payment_route, shared_key, shared_shape
 
 WEIGHTS = {'customer': .30, 'payer': .10, 'text': .20, 'structure': .15, 'number': .15, 'history': .10}
 STOPWORDS = set('rem tfr ac o l tt tien nuoc thoi gian gd thanh toan chuyen khoan the tai va cua cho tu den vnd cty cong ty co phan'.split())
@@ -48,6 +49,8 @@ def vietnamese_reason(reason):
         'Conflicting confirmed identifiers require manual check': 'Các mã đã xác nhận trong giao dịch chỉ tới những khách hàng khác nhau; cần kiểm tra thủ công.',
         'Unmatched or reordered customer-specific codes require manual check': 'Mã chữ/số hoặc số cơ sở chưa khớp đầy đủ theo đúng thứ tự với mẫu lịch sử; cần kiểm tra thủ công.',
         'Unmatched confirmed customer number requires manual check': 'Số từng được xác nhận là mã khách hàng bị thiếu, đổi giá trị hoặc đổi vị trí so với mẫu lịch sử; cần kiểm tra thủ công.',
+        'Shared or proxy template requires exact customer-specific numeric evidence': 'Mẫu thu hộ hoặc mẫu dùng chung chưa có mã/số riêng đủ tin cậy để xác định khách hàng; cần kiểm tra thủ công.',
+        'Unknown payment route requires exact customer-specific numeric evidence': 'Chưa xác định được kiểu thanh toán và chưa có mã/số riêng đủ tin cậy của khách hàng; cần kiểm tra thủ công.',
     }
     suffix = '; competing customer requires human review'
     base = reason.removesuffix(suffix)
@@ -131,12 +134,63 @@ class Core:
         self.embedder.prepare([self.normalize(raw).semantic_text for raw in raws])
 
     def prepare_names(self, raws, check_cancel=None):
-        # Deliberately separate from prepare_batch(), which learning also calls.
+        # Name extraction stays separate from date/numeric normalization.
         if self.name_extractor:
             self.name_extractor.prepare(raws, check_cancel=check_cancel)
 
     def extract_names(self, raw):
         return name_fields(self.name_extractor.extract(raw)) if self.name_extractor else structured_name_fields(raw)
+
+    def learning_alias_signature(self):
+        names = self.name_extractor.learning_signature() if self.name_extractor else 'bank-name-alias-v1'
+        return 'shared-v1:' + names
+
+    def ensure_template(self, session, norm, names):
+        shape = shared_shape(norm, names)
+        key = shared_key(shape, norm.structure)
+        template = session.scalar(select(PaymentTemplate).where(PaymentTemplate.fingerprint == key))
+        if template is None:
+            template = PaymentTemplate(fingerprint=key, template_text=shape, structure=norm.structure)
+            session.add(template)
+            session.flush()
+        elif template.template_text != shape or template.structure != norm.structure:
+            raise ValueError('Khóa mẫu chung không nhất quán; cần kiểm tra kho kiến thức.')
+        return template
+
+    def ensure_alias(self, session, customer, name, confidence=1.0):
+        name = str(name or '').strip()
+        if not name:
+            return False
+        normalized = ' '.join(fold(name).split())
+        alias = session.scalar(select(Alias).where(Alias.customer_id == customer.id,
+                                                  Alias.normalized_alias == normalized))
+        if alias is not None:
+            # A human-confirmed name may promote an automatically extracted alias.
+            alias.confidence = max(alias.confidence, confidence)
+            return False
+        session.add(Alias(customer_id=customer.id, alias=name, normalized_alias=normalized,
+                          confidence=confidence))
+        name_keys = {'name:' + word for word in text_tokens(normalized)}
+        if name_keys:
+            pattern_ids = list(session.scalars(select(Pattern.id).where(Pattern.customer_id == customer.id)))
+            existing = set(session.execute(select(Posting.pattern_id, Posting.token).where(
+                Posting.pattern_id.in_(pattern_ids), posting_in(name_keys))).all())
+            session.add_all([Posting(pattern_id=pattern_id, token=token, weight=2.0)
+                             for pattern_id in pattern_ids for token in name_keys
+                             if (pattern_id, token) not in existing])
+        return True
+
+    def learn_names(self, session, customer, raw):
+        extraction = self.extract_names(raw)
+        # Several people may be mentioned; do not attach all of them to one ID.
+        names = extraction['extracted_names']
+        if len(names) != 1:
+            return False
+        entities = [entity for entity in extraction['name_extraction']['entities'] if entity['name'] == names[0]]
+        if not entities:
+            return False
+        confidence = min(.95, max(entity.get('score') or .8 for entity in entities))
+        return self.ensure_alias(session, customer, names[0], confidence=confidence)
 
     def check_model(self, session, writing=False):
         meta = session.get(Metadata, 'embedding_model')
@@ -169,38 +223,43 @@ class Core:
             session.add(customer)
             session.flush()
         name = str(customer_name or customer.canonical_name).strip()
-        alias = fold(name)
-        if not session.scalar(select(Alias.id).where(Alias.customer_id == customer.id, Alias.normalized_alias == alias)):
-            session.add(Alias(customer_id=customer.id, alias=name, normalized_alias=alias, confidence=1))
-            name_keys = {'name:' + word for word in text_tokens(alias)}
-            pattern_ids = list(session.scalars(select(Pattern.id).where(Pattern.customer_id == customer.id)))
-            existing = set(session.execute(select(Posting.pattern_id, Posting.token).where(
-                Posting.pattern_id.in_(pattern_ids), posting_in(name_keys))).all())
-            session.add_all([Posting(pattern_id=pattern_id, token=token, weight=2.0)
-                             for pattern_id in pattern_ids for token in name_keys
-                             if (pattern_id, token) not in existing])
+        self.ensure_alias(session, customer, name)
         return customer
 
     def learn(self, session, transaction, customer_id, customer_name='', receipt_key=None):
         """Only called for an explicitly confirmed import or human feedback."""
         if transaction.label_status in ('skipped', 'unresolved'):
             return False
+        norm = self.normalize(transaction.raw)
+        chosen_key = id_key(str(customer_id).strip())
+        if norm.customer_ids and {id_key(value) for value in norm.customer_ids} != {chosen_key}:
+            raise ValueError('Mã khách hàng ghi rõ trong nội dung không khớp mã được xác nhận, hoặc có nhiều mã khách hàng. '
+                             'Kiểm tra dòng này trước khi học; không tự gộp hay chia các mã số.')
+        if norm.contract_ids:
+            # A confirmed file can still contain a mislabeled row. Do not attach
+            # an already owned water contract to an unrelated customer silently.
+            tokens = {'contract:' + value for value in norm.contract_ids}
+            owners = posting_owners(session, tokens)
+            for value in norm.contract_ids:
+                if owners['contract:' + value] and chosen_key not in {id_key(owner) for owner in owners['contract:' + value]}:
+                    raise ValueError('Hợp đồng ' + value + ' đã thuộc khách hàng khác trong kiến thức. '
+                                     'Kiểm tra hoặc sửa kiến thức liên quan trước khi học dòng này.')
         self.check_model(session, writing=True)
         receipt_key = receipt_key or '|'.join([transaction.raw, str(customer_id), transaction.date,
                                               str(transaction.amount), str(transaction.row_index)])
         receipt = fingerprint(receipt_key)
-        if session.scalar(select(KnowledgeReceipt.id).where(KnowledgeReceipt.fingerprint == receipt)):
-            return False
+        already_learned = session.scalar(select(KnowledgeReceipt.id).where(KnowledgeReceipt.fingerprint == receipt))
         customer = self.ensure_customer(session, customer_id, customer_name)
-        norm = self.normalize(transaction.raw)
+        self.learn_names(session, customer, transaction.raw)
         for number in norm.numbers:
             if number['numeric_type'] == 'UNKNOWN_NUMBER' and number['value'].isdigit() and id_key(number['value']) == id_key(customer.id):
                 number['confirmed_customer_value'] = True
                 next(s for s in norm.segments if s.get('slot') == number['slot'])['confirmed_customer_value'] = True
         period = period_of(transaction.date)
-        session.add(KnowledgeReceipt(fingerprint=receipt, customer_id=customer.id, period=period))
+        if not already_learned:
+            session.add(KnowledgeReceipt(fingerprint=receipt, customer_id=customer.id, period=period))
         payer_ids = []
-        for payer_name in [transaction.payer or 'BIDV'] + norm.payer_accounts:
+        for payer_name in ([transaction.payer or 'BIDV'] + norm.payer_accounts if not already_learned else []):
             payer = session.scalar(select(Payer).where(Payer.customer_id == customer.id, Payer.payer_name == payer_name))
             if not payer:
                 payer = Payer(customer_id=customer.id, payer_name=payer_name,
@@ -223,9 +282,30 @@ class Core:
             legacy = session.scalars(select(Pattern).where(Pattern.customer_id == customer.id,
                 Pattern.template_text == norm.template, Pattern.structure == norm.structure))
             pattern = next((candidate for candidate in legacy if pattern_identity(candidate.segments) == identity), None)
+        if already_learned and pattern is None:
+            return False  # Do not recreate a deliberately removed customer link.
+        names = self.extract_names(transaction.raw)['extracted_names'] + [customer.canonical_name, customer_name]
+        template = self.ensure_template(session, norm, names)
+        route = payment_route(transaction.raw, transaction.payment_mode, transaction.provider_kind, transaction.provider_name)
+        if not transaction.payment_mode and template.payment_mode != 'unknown':
+            route = {key: getattr(template, key) for key in ('payment_mode', 'provider_kind', 'provider_name')}
+        if pattern is not None:
+            session.execute(delete(Posting).where(Posting.pattern_id == pattern.id,
+                Posting.token.startswith('template:'), Posting.token != 'template:' + template.fingerprint))
+        if already_learned:
+            pattern.template_id = template.id
+            if transaction.payment_mode or pattern.payment_mode == 'unknown':
+                for key, value in route.items():
+                    setattr(pattern, key, value)
+            template_token = 'template:' + template.fingerprint
+            if not session.scalar(select(Posting.id).where(Posting.pattern_id == pattern.id, posting_equal(template_token))):
+                session.add(Posting(pattern_id=pattern.id, token=template_token, weight=2.0))
+            for key in route:
+                setattr(transaction, key, getattr(pattern, key))
+            return False
         new_pattern = pattern is None
         if new_pattern:
-            pattern = Pattern(customer_id=customer.id, payer_id=payer_ids[0] if payer_ids else None,
+            pattern = Pattern(customer_id=customer.id, template_id=template.id, **route, payer_id=payer_ids[0] if payer_ids else None,
                               fingerprint=pattern_hash, normalized_text=norm.normalized,
                               template_text=norm.template, raw_example=norm.raw, structure=norm.structure,
                               source_file=transaction.source, source_row=transaction.row_index,
@@ -235,11 +315,18 @@ class Core:
             session.add(pattern)
             session.flush()
         else:
+            pattern.template_id = template.id
+            if transaction.payment_mode or pattern.payment_mode == 'unknown':
+                for key, value in route.items():
+                    setattr(pattern, key, value)
             pattern.seen_count += 1
             if period > pattern.last_period and period != 'unknown':
                 pattern.confidence = confidence_update(pattern.confidence)
                 pattern.last_period = period
             pattern.last_seen = now()
+        # Return the effective stored label to feedback/export callers as well.
+        for key in route:
+            setattr(transaction, key, getattr(pattern, key))
         current = {(n['slot'], n['value']) for n in norm.numbers if n['numeric_type'] != 'AMOUNT'}
         current_digests = {(slot, fingerprint(value)) for slot, value in current}
         features = {(n.slot_index, n.numeric_value): n for n in session.scalars(
@@ -287,6 +374,7 @@ class Core:
                 execution_options={'synchronize_session': False})
         # Indexed postings allow bounded retrieval in the portable benchmark harness.
         tokens = {'id:' + id_key(customer.id): 8.0, 'exact:' + fingerprint(norm.normalized): 10.0}
+        tokens['template:' + template.fingerprint] = 2.0
         signature = identity_signature(norm.raw)
         if signature:
             tokens['detail:' + fingerprint(signature)] = 12.0
@@ -376,6 +464,8 @@ class Core:
         postings_channel('payer', {'payer:' + value for value in norm.payer_accounts})
         name_words = text_tokens(' '.join(fold(name) for name in (extracted_names or [])))
         postings_channel('name_entity', {'name:' + word for word in name_words})
+        shape = shared_shape(norm, extracted_names or ())
+        postings_channel('shared_template', {'template:' + shared_key(shape, norm.structure)})
         words = text_tokens(norm.normalized)
         tokens = {'w:' + word for word in words} | {'name:' + word for word in words}
         tokens.update('n:' + n['value'] for n in norm.numbers if n['numeric_type'] in (
@@ -427,17 +517,23 @@ class Core:
         candidates = [patterns[pattern_id] for pattern_id in ids]
         return (candidates, trace) if with_trace else candidates
 
-    def classify(self, session, raw, payer='BIDV'):
+    def classify(self, session, raw, payer='BIDV', *, payment_mode='', provider_kind='', provider_name=''):
         self.check_model(session)
         norm = self.normalize(raw)
         extracted = self.extract_names(raw)
+        route_evidence = {**payment_hint(raw), 'source': 'input_label' if payment_mode else 'unresolved'}
+        route = payment_route(raw, payment_mode, provider_kind, provider_name)
+        if payment_mode:
+            route_evidence['reason_vi'] = ('Kiểu thanh toán theo nhãn được cung cấp trong dữ liệu đối soát.'
+                if route['payment_mode'] != 'unknown' else 'Dữ liệu nguồn đánh dấu kiểu thanh toán là Chưa xác định.')
         # Changing thresholds must never let contradictory identifiers pass.
         guard_cap = min(.59, max(0, self.review_threshold - .01))
         def manual(reason, **evidence):
             return {'customer_id': None, 'customer_name': None, 'score': 0.0, 'decision': 'manual_check',
                     'evidence': {'reason': reason, 'reason_vi': vietnamese_reason(reason), 'candidate_count': 0, 'unknown_customer': True,
                                  'detected_customer_ids': norm.customer_ids, **evidence},
-                    'normalization': norm.dict(), 'alternatives': [], **extracted}
+                    'normalization': norm.dict(), 'alternatives': [], **extracted, **route,
+                    'payment_mode_evidence': route_evidence}
         if len({id_key(value) for value in norm.customer_ids}) > 1:
             return manual('Multiple customer IDs require manual allocation', multiple_customer_ids=True)
         id_tokens = {'id:' + id_key(value) for value in norm.customer_ids}
@@ -485,10 +581,25 @@ class Core:
             return manual('No confirmed customer evidence; confidence is 0%; manual check required', retrieval=retrieval_trace)
         customer_ids = {p.customer_id for p in candidates}
         customers = {c.id: c for c in session.scalars(select(Customer).where(Customer.id.in_(customer_ids)))}
-        aliases = defaultdict(list)
+        aliases, trusted_aliases = defaultdict(list), defaultdict(list)
         for alias in session.scalars(select(Alias).where(Alias.customer_id.in_(customer_ids))):
             aliases[alias.customer_id].append(alias.normalized_alias)
+            if alias.confidence >= 1.0:
+                trusted_aliases[alias.customer_id].append(alias.normalized_alias)
+        names_in_content = {alias for names in trusted_aliases.values() for alias in names
+                            if len(alias) > 3 and any(char.isalpha() for char in alias)
+                            and re.search(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', norm.normalized)}
+        alias_owners = defaultdict(set)
+        if names_in_content:
+            # Check the whole knowledge, even when another owner was not retrieved.
+            for alias, owner in session.execute(select(Alias.normalized_alias, Alias.customer_id).where(
+                    Alias.normalized_alias.in_(names_in_content))):
+                alias_owners[alias].add(owner)
         pattern_ids = [p.id for p in candidates]
+        template_ids = {pattern.template_id for pattern in candidates}
+        template_counts = dict(session.execute(select(Pattern.template_id, func.count(func.distinct(Pattern.customer_id)))
+            .where(Pattern.template_id.in_(template_ids)).group_by(Pattern.template_id)).all())
+        templates = {template.id: template for template in session.scalars(select(PaymentTemplate).where(PaymentTemplate.id.in_(template_ids)))}
         numeric = defaultdict(list)
         query_values = {n['value'] for n in norm.numbers}
         for feature in session.scalars(select(NumericFeature).where(NumericFeature.pattern_id.in_(pattern_ids),
@@ -527,10 +638,11 @@ class Core:
                                   if r['type'] == 'MIXED_CODE' and r['same_role'] and r['exact'] and r['same_format']
                                   and mixed_code_owners.get(r['query_value']) == {customer.id}]
             exact_id = any(id_key(customer.id) == id_key(value) for value in norm.customer_ids)
-            alias_matches = [a for a in aliases[customer.id] if len(a) > 3 and re.search(r'(?<!\w)' + re.escape(a) + r'(?!\w)', norm.normalized)]
+            alias_matches = [alias for alias in trusted_aliases[customer.id] if alias in names_in_content]
+            unique_alias_matches = [alias for alias in alias_matches if alias_owners[alias] == {customer.id}]
             matched_extracted_names = [name for name in extracted['extracted_names'] if
                                        name_key(name) in {name_key(alias) for alias in aliases[customer.id]}]
-            customer_score = 1.0 if exact_id or unique_contract or confirmed_token or unique_mixed_codes or alias_matches else 0.0
+            customer_score = 1.0 if exact_id or unique_contract or confirmed_token or unique_mixed_codes or unique_alias_matches else 0.0
             account_match = bool(payer_accounts[customer.id])
             unique_accounts = [a for a in payer_accounts[customer.id] if account_owners[a] == {customer.id}]
             payment_similarity = SequenceMatcher(None, signature, identity_signature(pattern.raw_example), autojunk=False).ratio()
@@ -589,8 +701,8 @@ class Core:
                  vector_score >= .94 and payment_similarity >= .80 and len(distinctive_overlap) >= 2 and number_comparison['template_compatible']:
                 score = max(score, .94 + .02 * vector_score)
                 reason = 'Unique payer with semantic and exact structured evidence'
-            elif unique_details and alias_matches and max(len(a.split()) for a in alias_matches) >= 2 and water_intent and \
-                 (max(len(a.split()) for a in alias_matches) >= 3 or len(distinctive_overlap) >= 2):
+            elif unique_details and unique_alias_matches and max(len(a.split()) for a in unique_alias_matches) >= 2 and water_intent and \
+                 (max(len(a.split()) for a in unique_alias_matches) >= 3 or len(distinctive_overlap) >= 2):
                 score = max(score, .93)
                 reason = 'Unique historical payment details and confirmed customer name'
             elif not exact_id:
@@ -618,6 +730,17 @@ class Core:
                 score = min(score, guard_cap)
                 reason = 'Conflicting confirmed identifiers require manual check'
                 identifier_guards.append(reason)
+            shared_customer_count = template_counts.get(pattern.template_id, 0)
+            proxy_or_shared = route_evidence['suggested_mode'] == 'proxy' or route['payment_mode'] == 'proxy' or pattern.payment_mode == 'proxy' or shared_customer_count > 1
+            numeric_customer_evidence = exact_id or unique_contract or confirmed_token or bool(unique_mixed_codes)
+            if proxy_or_shared and not numeric_customer_evidence:
+                score = min(score, guard_cap)
+                reason = 'Shared or proxy template requires exact customer-specific numeric evidence'
+                identifier_guards.append(reason)
+            elif route['payment_mode'] == 'unknown' and pattern.payment_mode == 'unknown' and not numeric_customer_evidence:
+                score = min(score, guard_cap)
+                reason = 'Unknown payment route requires exact customer-specific numeric evidence'
+                identifier_guards.append(reason)
             if customer.id in blocked:
                 score = 0
                 reason = 'Human feedback previously rejected this customer for this transaction'
@@ -633,6 +756,15 @@ class Core:
                                                   'date': pattern.example_date},
                                'matched_template': pattern.template_text, 'matched_aliases': alias_matches,
                                'matched_extracted_names': matched_extracted_names,
+                               'unique_confirmed_aliases': unique_alias_matches,
+                               'alias_owners': {alias: sorted(alias_owners[alias]) for alias in alias_matches},
+                               'shared_template_id': pattern.template_id,
+                               'shared_template': templates[pattern.template_id].template_text,
+                               'shared_template_customer_count': shared_customer_count,
+                               'numeric_customer_evidence': bool(numeric_customer_evidence),
+                               'matched_payment_mode': pattern.payment_mode,
+                               'matched_provider_kind': pattern.provider_kind,
+                               'matched_provider_name': pattern.provider_name,
                                'explicit_customer_id': exact_id, 'matched_numbers': matched_numbers,
                                'numeric_comparison': number_comparison, 'explicit_contract_ids': norm.contract_ids,
                                'unique_contract_match': unique_contract, 'confirmed_customer_token': confirmed_token,
@@ -688,6 +820,8 @@ class Core:
             guard_reasons = {'Conflicting contract or identifier order blocks acceptance',
                              'Unmatched or reordered customer-specific codes require manual check',
                              'Unmatched confirmed customer number requires manual check',
+                             'Shared or proxy template requires exact customer-specific numeric evidence',
+                             'Unknown payment route requires exact customer-specific numeric evidence',
                              'Conflicting confirmed identifiers require manual check'}
             manual_reason = best['evidence']['reason'] if best['evidence']['reason'] in guard_reasons else \
                 'Historical candidates do not identify this customer reliably; confidence is 0%; manual check required'
@@ -711,9 +845,18 @@ class Core:
         best['normalization'] = norm.dict()
         best['alternatives'] = [{k: r[k] for k in ('customer_id', 'customer_name', 'score')} for r in ranked[1:6]]
         best.update(extracted)
+        if (not payment_mode and best['score'] >= self.auto_threshold and best['evidence'].get('numeric_customer_evidence')
+                and best['evidence'].get('matched_payment_mode', 'unknown') != 'unknown'
+                and best['evidence'].get('shared_template') == shared_shape(norm, extracted['extracted_names'] + [best['customer_name']])):
+            route = {key: best['evidence']['matched_' + key] for key in ('payment_mode', 'provider_kind', 'provider_name')}
+            route_evidence.update(source='confirmed_link', pattern_id=best['evidence']['matched_pattern_id'],
+                reason_vi='Kiểu thanh toán lấy từ liên kết lịch sử đã xác nhận, sau khi khớp bố cục và số riêng của khách hàng.')
+        best.update(route)
+        best['payment_mode_evidence'] = route_evidence
         return best
 
-    def review(self, session, record, accepted, correct_customer_id=None, customer_name=''):
+    def review(self, session, record, accepted, correct_customer_id=None, customer_name='',
+               payment_mode='', provider_kind='', provider_name=''):
         """Human confirmation learns immediately; operational records stay outside PostgreSQL."""
         from .excel import ExcelTransaction
         self.check_model(session)
@@ -750,7 +893,13 @@ class Core:
                 matched.confidence *= .7
             session.add(KnowledgeReceipt(fingerprint=negative_receipt, customer_id=wrong, period=period_of(date)))
         learned = False
+        review_route = None
+        explicit_route = bool(payment_mode)
         if chosen:
+            if not payment_mode and record.get('payment_mode') in ('proxy', 'self'):
+                payment_mode = record.get('payment_mode') or ''
+                provider_kind = provider_kind or record.get('provider_kind') or ''
+                provider_name = provider_name or record.get('provider_name') or ''
             customer = session.get(Customer, chosen)
             source = record.get('source', '')
             if record.get('sheet'):
@@ -758,10 +907,18 @@ class Core:
             row = ExcelTransaction(record.get('row_index') or 0, record['raw'], date=date,
                 amount=record.get('amount', 0), payer=record.get('payer', 'BIDV'),
                 reference=record.get('reference', ''), sheet=record.get('sheet', ''),
-                source=source + ' (người dùng xác nhận)', label_status='confirmed')
+                source=source + ' (người dùng xác nhận)', label_status='confirmed',
+                payment_mode=payment_mode, provider_kind=provider_kind, provider_name=provider_name)
             self.learn(session, row, chosen, customer_name or customer.canonical_name, receipt_key=receipt_key)
+            review_route = payment_route(record['raw'], row.payment_mode, row.provider_kind, row.provider_name)
             learned = True
-        return {**record, 'confirmed_customer_id': chosen,
+        return {**record, **(review_route or {}),
+                'payment_mode_evidence': ({**payment_hint(record['raw']),
+                    'source': 'user_confirmation' if explicit_route else 'confirmed_link' if review_route['payment_mode'] != 'unknown' else 'unresolved',
+                    'reason_vi': ('Kiểu thanh toán được người dùng chọn khi xác nhận.' if explicit_route else
+                        'Kiểu thanh toán lấy từ mẫu hoặc liên kết lịch sử đã xác nhận.' if review_route['payment_mode'] != 'unknown' else
+                        'Chưa có nhãn đã xác nhận để phân biệt tự trả và thu hộ.')} if chosen else record.get('payment_mode_evidence', {})),
+                'confirmed_customer_id': chosen,
                 'confirmed_customer_name': session.get(Customer, chosen).canonical_name if chosen else '',
                 'status': 'confirmed' if chosen else 'rejected', 'learned': learned,
                 'reviewed_at': now()}
