@@ -119,6 +119,7 @@ def label_status(customer_id, name):
 
 
 # Aliases use folded text; columns are determined per sheet, never by bank name.
+LAYOUT_VERSION = 'bank-layout-v2-customer-id-aliases'
 HEADER_ALIASES = {
     'raw': ('mo ta giao dich', 'mo ta', 'dien giai', 'noi dung giao dich', 'noi dung',
             'lenh goc ngan hang', 'ebl', 'noidung', 'transaction description', 'description', 'trans detail',
@@ -135,8 +136,10 @@ HEADER_ALIASES = {
     'reference': ('so tham chieu', 'so giao dich', 'so gd', 'so but toan', 'but toan', 'so id',
                   'so ref', 'ma giao dich', 'ma tham chieu', 'reference no', 'reference',
                   'transaction number', 'transaction id', 'trans id'),
-    'customer_id': ('idkh', 'id kh', 'ma khach hang', 'customer id'),
-    'customer_name': ('ten khach hang', 'ten kh', 'tenkh', 'don vi chuyen tien', 'customer name'),
+    'customer_id': ('idkh', 'id kh', 'ma khach hang', 'ma kh', 'makh', 'makhachhang',
+                    'ma so khach hang', 'ma so kh', 'mkh', 'customer id', 'customer code',
+                    'customer number', 'id khach hang', 'khach hang id'),
+    'customer_name': ('ten khach hang', 'ten kh', 'tenkh', 'don vi chuyen tien', 'customer name', 'ho va ten'),
     'payer': ('hinh thuc', 'ngan hang', 'kenh thanh toan', 'bank', 'nganhang'),
     'payment_mode': ('kieuthanhtoan', 'kieu thanh toan', 'payment mode'),
     'provider_kind': ('loaidonvithuho', 'loai don vi thu ho', 'provider kind'),
@@ -151,7 +154,7 @@ STANDARD_LAYOUTS = {
         {'key': 'GHINO', 'description': 'Số tiền chuyển ra, không âm. Để trống/0 nếu chỉ ghi có.', 'required': False},
         {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng. Định dạng Text để giữ số 0 đầu và mã dài.', 'required': False},
         {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh giao dịch; để trống thì dùng tên sheet.', 'required': False},
-        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = dịch vụ thu hộ; self = khách hàng tự trả; unknown = chưa rõ. Trống để nhận diện khi có dấu hiệu rõ.', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = thu hộ; self = tự trả; unknown = chưa xác định. Có thể để trống.', 'required': False},
         {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown; chỉ mô tả đơn vị thu hộ.', 'required': False},
         {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra; không phải mã khách hàng.', 'required': False}]},
     'confirmed': {'title': 'Bố cục chuẩn cho học dữ liệu đã xác nhận', 'columns': [
@@ -162,17 +165,14 @@ STANDARD_LAYOUTS = {
         {'key': 'SOTIEN', 'description': 'Số tiền thanh toán không âm, để trống thì 0.', 'required': False},
         {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh trả tiền; để trống thì dùng tên sheet.', 'required': False},
         {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng, định dạng Text.', 'required': False},
-        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = dịch vụ thu hộ; self = khách hàng tự trả; unknown = chưa rõ. Trống để nhận diện khi có dấu hiệu rõ.', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = thu hộ; self = tự trả; unknown = chưa xác định. Trống thì dùng loại của mẫu đã xác nhận nếu có.', 'required': False},
         {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False},
         {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra.', 'required': False}]},
 }
 
 
 def layout_guidance(kind):
-    required = 'NGAY, NOIDUNG, GHICO (GHINO nếu có)' if kind == 'raw' else 'IDKH, NOIDUNG (TENKH nếu có)'
-    return ('Không nhận diện được sheet phù hợp. Chỉnh sheet giao dịch theo bố cục chuẩn với tiêu đề '
-            + required + ' trên một dòng, dữ liệu ở các dòng bên dưới; không gộp ô tiêu đề. '
-            'Có thể tải tệp mẫu ở khu vực tải dữ liệu hoặc Hướng dẫn sử dụng.')
+    return 'Không nhận diện được bố cục. Xem mẫu bố cục trên giao diện để chỉnh lại tệp.'
 
 
 def header_columns(values):
@@ -190,13 +190,27 @@ def header_columns(values):
                 if role == 'debit' and alias == 'no' and label == 'no' and 'ợ' not in str(value).lower():
                     continue  # English "No." is a row counter, not a debit column.
                 # One-word labels must not match narrative cells (e.g. "co phan").
-                if matches(alias):
+                if matches(alias) or (role == 'customer_id' and label.replace(' ', '') == alias.replace(' ', '')):
+                    if role == 'customer_id':
+                        priority = 0  # Different IDKH aliases are equally authoritative; never pick between two ID columns.
                     if role not in priorities or priority < priorities[role]:
                         columns[role], priorities[role] = column, priority
                         ambiguous.discard(role)
                     elif priority == priorities[role] and column != columns[role]:
                         ambiguous.add(role)
                     break
+    # "ID" alone can be a bank reference. Only treat it as a customer label
+    # next to an explicitly named customer column and transaction narrative (e.g. SHB).
+    customer_label = ' '.join(re.findall(r'[a-z0-9]+', fold(values.get(columns.get('customer_name'), ''))))
+    explicit_customer_name = any(customer_label == alias or customer_label.startswith(alias + ' ')
+                                for alias in ('ten khach hang', 'ten kh', 'tenkh', 'customer name', 'ho va ten'))
+    if 'customer_id' not in priorities and 'raw' in columns and explicit_customer_name:
+        generic_ids = [column for column, value in values.items()
+                       if ' '.join(re.findall(r'[a-z0-9]+', fold(value))) in ('id', 'ma id', 'maid')]
+        if len(generic_ids) == 1:
+            columns['customer_id'] = generic_ids[0]
+        elif generic_ids:
+            ambiguous.add('customer_id')
     return {role: column for role, column in columns.items() if role not in ambiguous}, ambiguous
 
 
@@ -232,7 +246,7 @@ def headerless_layout(sheet, values):
 
 
 class ConfirmedCsv:
-    """Portable confirmed examples, including CSV exported by the review screen."""
+    """Confirmed examples with the same header aliases as Excel; also accepts older CSVs."""
     def __init__(self, path, check_cancel=None, row_errors=None):
         self.path = Path(path)
         self.check_cancel = check_cancel or (lambda: None)
@@ -242,8 +256,22 @@ class ConfirmedCsv:
         self.source = self.path.open(encoding='utf-8-sig', newline='')
         try:
             self.reader = csv.DictReader(self.source)
-            if not {'IDKH', 'NOIDUNG'}.issubset(self.reader.fieldnames or []):
+            fields = self.reader.fieldnames or []
+            columns, ambiguous = header_columns(dict(enumerate(fields)))
+            if ambiguous:
+                raise ValueError('CSV có nhiều cột cùng vai trò. Xem mẫu bố cục trên giao diện để chỉnh lại tiêu đề.')
+            if not {'customer_id', 'raw'}.issubset(columns):
                 raise ValueError('Learning CSV requires IDKH and NOIDUNG columns')
+            canonical = {'customer_id': 'IDKH', 'customer_name': 'TENKH', 'raw': 'NOIDUNG',
+                         'date': 'NGAY', 'amount': 'SOTIEN', 'payer': 'NGANHANG', 'reference': 'REFERENCE',
+                         'payment_mode': 'KIEUTHANHTOAN', 'provider_kind': 'LOAIDONVITHUHO', 'provider_name': 'DONVITHUHO'}
+            renamed = {column: canonical[role] for role, column in columns.items() if role in canonical}
+            if 'amount' not in columns and 'credit' in columns:
+                renamed[columns['credit']] = 'SOTIEN'
+            normalized = [renamed.get(index, str(name).strip().upper()) for index, name in enumerate(fields)]
+            if len(normalized) != len(set(normalized)):
+                raise ValueError('CSV có tiêu đề cột trùng nhau. Xem mẫu bố cục trên giao diện để chỉnh lại tiêu đề.')
+            self.reader.fieldnames = normalized
         except BaseException:
             self.source.close()
             raise
@@ -542,12 +570,13 @@ class StreamingWorkbook:
                 raise ValueError('Mã khách hàng chưa hợp lệ hoặc vượt quá 100 ký tự.')
             if len(raw) > 32767:
                 raise ValueError('Nội dung giao dịch vượt quá 32.767 ký tự.')
-            amount = parse_money(get('amount'))
+            amount = parse_money(get('amount') if 'amount' in columns else get('credit'))
             if amount is None or amount < 0:
                 raise ValueError('Số tiền của dòng học chưa hợp lệ.')
             return ExcelTransaction(row_index, raw, date=date_text(get('date')),
                 amount=amount, customer_id=customer_id, customer_name=name or customer_id,
-                payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, label_status=status,
+                payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet,
+                reference=str(get('reference')).strip(), label_status=status,
                 payment_mode=str(get('payment_mode')).strip(), provider_kind=str(get('provider_kind')).strip(),
                 provider_name=str(get('provider_name')).strip())
         reference = str(get('reference')).strip()

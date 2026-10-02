@@ -5,3 +5,5 @@
 @media(prefers-reduced-motion:reduce){.jobprogress span{animation:none;width:100%}}
 
 .paymentsummary{margin:14px 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface,#f7fafc);overflow-wrap:anywhere}.paymentsummary p{margin:6px 0 0}
+
+.layoutcsv{white-space:pre;overflow-x:auto;overflow-wrap:normal;font-family:Consolas,monospace}.templatecontrols{align-items:end}.templatecontrols button{white-space:normal;min-width:0}

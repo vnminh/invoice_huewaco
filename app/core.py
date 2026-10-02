@@ -39,7 +39,7 @@ def vietnamese_reason(reason):
         'Unique historical payment details and confirmed customer name': 'Nội dung thanh toán và tên khách hàng trùng một lịch sử duy nhất.',
         'Name alone or shared payer does not identify a meter reliably': 'Chỉ tên đơn vị hoặc người trả tiền chung chưa đủ để xác định đúng đồng hồ/khách hàng.',
         'Multiple customer IDs require manual allocation': 'Có nhiều mã khách hàng trong cùng giao dịch; cần phân bổ và kiểm tra thủ công.',
-        'Unknown or conflicting water contract requires manual check': 'Hợp đồng cấp nước chưa có trong lịch sử hoặc mâu thuẫn với mã khách hàng; cần kiểm tra thủ công.',
+        'Unknown or conflicting water contract requires manual check': 'Hợp đồng cấp nước chưa có bằng chứng khách hàng phù hợp trong lịch sử; cần kiểm tra thủ công.',
         'Exact water contract and ordered template evidence': 'Mã hợp đồng trùng chính xác; mẫu nội dung và vị trí số khớp với lịch sử đã xác nhận.',
         'Confirmed customer token at the same template position': 'Số đã gắn với khách hàng trong lịch sử trùng chính xác tại cùng vị trí trong mẫu nội dung.',
         'Conflicting contract or identifier order blocks acceptance': 'Mã hợp đồng hoặc thứ tự mã định danh khác mẫu lịch sử; không chấp nhận ghép.',
@@ -49,7 +49,7 @@ def vietnamese_reason(reason):
         'Conflicting confirmed identifiers require manual check': 'Các mã đã xác nhận trong giao dịch chỉ tới những khách hàng khác nhau; cần kiểm tra thủ công.',
         'Unmatched or reordered customer-specific codes require manual check': 'Mã chữ/số hoặc số cơ sở chưa khớp đầy đủ theo đúng thứ tự với mẫu lịch sử; cần kiểm tra thủ công.',
         'Unmatched confirmed customer number requires manual check': 'Số từng được xác nhận là mã khách hàng bị thiếu, đổi giá trị hoặc đổi vị trí so với mẫu lịch sử; cần kiểm tra thủ công.',
-        'Shared or proxy template requires exact customer-specific numeric evidence': 'Mẫu thu hộ hoặc mẫu dùng chung chưa có mã/số riêng đủ tin cậy để xác định khách hàng; cần kiểm tra thủ công.',
+        'Shared or proxy template requires exact customer-specific numeric evidence': 'Mẫu thu hộ hoặc mẫu giao dịch chưa có mã/số riêng đủ tin cậy để xác định khách hàng; cần kiểm tra thủ công.',
         'Unknown payment route requires exact customer-specific numeric evidence': 'Chưa xác định được kiểu thanh toán và chưa có mã/số riêng đủ tin cậy của khách hàng; cần kiểm tra thủ công.',
     }
     suffix = '; competing customer requires human review'
@@ -154,7 +154,7 @@ class Core:
             session.add(template)
             session.flush()
         elif template.template_text != shape or template.structure != norm.structure:
-            raise ValueError('Khóa mẫu chung không nhất quán; cần kiểm tra kho kiến thức.')
+            raise ValueError('Khóa mẫu giao dịch không nhất quán; cần kiểm tra kho kiến thức.')
         return template
 
     def ensure_alias(self, session, customer, name, confidence=1.0):
@@ -235,15 +235,8 @@ class Core:
         if norm.customer_ids and {id_key(value) for value in norm.customer_ids} != {chosen_key}:
             raise ValueError('Mã khách hàng ghi rõ trong nội dung không khớp mã được xác nhận, hoặc có nhiều mã khách hàng. '
                              'Kiểm tra dòng này trước khi học; không tự gộp hay chia các mã số.')
-        if norm.contract_ids:
-            # A confirmed file can still contain a mislabeled row. Do not attach
-            # an already owned water contract to an unrelated customer silently.
-            tokens = {'contract:' + value for value in norm.contract_ids}
-            owners = posting_owners(session, tokens)
-            for value in norm.contract_ids:
-                if owners['contract:' + value] and chosen_key not in {id_key(owner) for owner in owners['contract:' + value]}:
-                    raise ValueError('Hợp đồng ' + value + ' đã thuộc khách hàng khác trong kiến thức. '
-                                     'Kiểm tra hoặc sửa kiến thức liên quan trước khi học dòng này.')
+        # A water contract may be shared by several confirmed customer IDs.
+        # Keep each customer's values/link separately; the explicit ID guard above still applies.
         self.check_model(session, writing=True)
         receipt_key = receipt_key or '|'.join([transaction.raw, str(customer_id), transaction.date,
                                               str(transaction.amount), str(transaction.row_index)])
@@ -556,17 +549,18 @@ class Core:
         consistent_new_contracts = set()
         for value in norm.contract_ids:
             owners = identity_owners['contract:' + value]
-            if not owners and value in norm.customer_ids:
-                # Two explicit fields agree exactly with an already known customer.
-                # This does not register the contract or learn anything during testing.
+            if customer_scope and customer_scope not in owners:
+                # An explicit known ID takes priority over a shared/new contract.
+                # Only human confirmation can learn this additional association.
                 consistent_new_contracts.add(value)
-            elif not owners or (customer_scope and customer_scope not in owners):
+            elif not owners:
                 return manual('Unknown or conflicting water contract requires manual check', detected_contract_ids=norm.contract_ids)
             contract_owners[value] = owners
         # Ownership comes from the WHOLE knowledge, before bounded retrieval.
-        # Contradictory known codes must not disappear when a competing customer
+        # Contradictory non-contract codes must not disappear when a competing customer
         # falls outside the candidate budget or an explicit-ID search scope.
-        ownership_constraints = [owners for owners in identity_owners.values() if owners]
+        ownership_constraints = [owners for token, owners in identity_owners.items()
+                                 if owners and not (customer_scope and token.startswith('contract:'))]
         compatible_owners = set.intersection(*ownership_constraints) if ownership_constraints else None
         ownership_evidence = {token: sorted(owners) for token, owners in identity_owners.items() if owners}
         if compatible_owners is not None and not compatible_owners:
@@ -712,9 +706,8 @@ class Core:
                 score = min(score, guard_cap)
                 reason = 'Explicit customer ID does not match this historical customer'
                 identifier_guards.append(reason)
-            unresolved_contract = norm.contract_ids and set(number_comparison['aligned_contracts']) != set(norm.contract_ids) and not \
-                (exact_id and consistent_new_contracts == set(norm.contract_ids) and not any(s.get('numeric_type') == 'CONTRACT_ID' for s in pattern.segments))
-            if number_comparison['contract_conflict'] or unresolved_contract:
+            unresolved_contract = bool(norm.contract_ids and set(number_comparison['aligned_contracts']) != set(norm.contract_ids))
+            if not exact_id and (number_comparison['contract_conflict'] or unresolved_contract):
                 score = min(score, guard_cap)
                 reason = 'Conflicting contract or identifier order blocks acceptance'
                 identifier_guards.append(reason)
@@ -773,6 +766,8 @@ class Core:
                                'identifier_guards': identifier_guards,
                                'unique_mixed_codes': unique_mixed_codes,
                                'consistent_new_contracts': sorted(consistent_new_contracts),
+                               'customer_id_priority_over_contract': bool(exact_id and norm.contract_ids),
+                               'shared_contract_customer_ids': {value: sorted(owners) for value, owners in contract_owners.items() if len(owners) > 1},
                                'candidate_count': len(candidates),
                                'retrieval': {key: value for key, value in retrieval_trace.items() if key != 'candidate_sources'},
                                'retrieval_sources': retrieval_sources,
@@ -799,6 +794,8 @@ class Core:
                                    'ID khách hàng trong giao dịch trùng với ID lưu trong dữ liệu.' if exact_id else
                                        'Tên hoặc bí danh khách hàng khớp: ' + ', '.join(alias_matches) if alias_matches else
                                        'Chưa tìm thấy ID hoặc tên khách hàng khớp chính xác.',
+                                   *(['Ưu tiên IDKH đã nhận diện; một HD có thể liên kết nhiều IDKH. Quan hệ HD mới chỉ được học sau xác nhận.']
+                                     if exact_id and norm.contract_ids else []),
                                    f'Độ tương đồng nội dung {text_score:.1%}; độ tương đồng thứ tự chữ/số {structure:.1%}.',
                                    'Tài khoản trả tiền khớp: ' + ', '.join(sorted(payer_accounts[customer.id])) if account_match else
                                        'Chưa tìm thấy tài khoản trả tiền riêng của khách hàng trùng khớp.',

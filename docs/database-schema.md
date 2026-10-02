@@ -61,6 +61,8 @@ Ví dụ đã xác nhận: `TT KH:001234 HD:700012 TIEN NUOC`.
 
 Hai slot có hai hàng `numeric_slots`, và giá trị tương ứng trong `numeric_features`. Mẫu có các posting như `template:<hash>`, `id:`, `n:`, `contract:`, `name:`, `payer:`, `code:`, `detail:`, từ nội dung và bucket vector tùy dữ liệu.
 
+Không có ràng buộc unique HD theo khách hàng: `contract:<value>` có thể trỏ tới nhiều liên kết thuộc nhiều IDKH. Mỗi liên kết giữ giá trị/slot riêng. Một HD có nhiều IDKH không yêu cầu thêm bảng hay đổi schema; ưu tiên IDKH được xử lý trong logic học/đối soát.
+
 Không lưu riêng mọi hóa đơn: số hóa đơn là feature biến đổi khi trích xuất được; mẫu lưu một ví dụ đại diện và các giá trị theo slot đã học.
 
 ## Chỉ mục và chuỗi số dài

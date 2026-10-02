@@ -26,7 +26,7 @@ from .core import Core, id_key, learning_receipt, posting_in, text_tokens
 from .db import (Alias, Base, Customer, HardNegative, KnowledgeReceipt, NumericFeature,
                  NumericSlot, Pattern, PaymentTemplate, Payer, Posting, default_url, make_engine, sessions)
 from .excel import ExcelTransaction, StreamingWorkbook, STANDARD_LAYOUTS, layout_guidance
-from .exports import csv_archive, csv_stream, layout_template, result_workbook, sheet_names
+from .exports import csv_archive, result_workbook, sheet_names
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
 from .name_extraction import NameExtractor
@@ -107,6 +107,14 @@ class PaymentRouteInput(BaseModel):
     payment_mode: Literal['unknown', 'proxy', 'self']
     provider_kind: Literal['unknown', 'bank', 'wallet', 'other'] = 'unknown'
     provider_name: str = Field(default='', max_length=300)
+
+
+class BulkTemplatePaymentInput(PaymentRouteInput):
+    q: str = Field(default='', max_length=300)
+    filter_payment_mode: Literal['unknown', 'proxy', 'self'] | None = None
+    expected_count: int = Field(ge=1)
+    expected_links: int = Field(ge=0)
+    confirmed: Literal[True]
 
 
 class TemplateEditInput(BaseModel):
@@ -452,13 +460,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                  for column in model.__table__.columns]}
                     for name, model in sorted(database_models.items())]
 
-    @api.get('/database/tables/{table_name}/rows')
-    def database_rows(table_name: str, q: str = Query(default='', max_length=300),
-                      customer_id: str | None = Query(default=None, max_length=100),
-                      template_id: int | None = Query(default=None, ge=1),
-                      offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100)):
-        model = database_model(table_name)
-        primary_key = list(model.__table__.primary_key.columns)[0]
+    def filtered_database_query(model, q='', customer_id=None, template_id=None, payment_mode=None):
         query = select(model)
         if customer_id is not None:
             if 'customer_id' not in model.__table__.columns:
@@ -466,8 +468,12 @@ def create_app(engine=None, core=None, runtime_dir=None):
             query = query.where(model.__table__.columns.customer_id == customer_id)
         if template_id is not None:
             if 'template_id' not in model.__table__.columns:
-                raise HTTPException(422, 'Nhóm dữ liệu này không có liên kết mẫu chung.')
+                raise HTTPException(422, 'Nhóm dữ liệu này không có liên kết mẫu giao dịch.')
             query = query.where(model.__table__.columns.template_id == template_id)
+        if payment_mode is not None:
+            if 'payment_mode' not in model.__table__.columns:
+                raise HTTPException(422, 'Nhóm dữ liệu này không có kiểu thanh toán.')
+            query = query.where(model.__table__.columns.payment_mode == payment_mode)
         if q.strip():
             # Search scalar fields; do not turn large JSON/vector data into a full-table text scan.
             searchable = [func.lower(cast(column, String)).contains(
@@ -475,6 +481,17 @@ def create_app(engine=None, core=None, runtime_dir=None):
                               else q.strip().lower(), autoescape=True)
                           for column in model.__table__.columns if str(column.type) not in ('JSON', 'JSONB', 'vector(384)')]
             query = query.where(or_(*searchable))
+        return query
+
+    @api.get('/database/tables/{table_name}/rows')
+    def database_rows(table_name: str, q: str = Query(default='', max_length=300),
+                      customer_id: str | None = Query(default=None, max_length=100),
+                      template_id: int | None = Query(default=None, ge=1),
+                      payment_mode: Literal['unknown', 'proxy', 'self'] | None = None,
+                      offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100)):
+        model = database_model(table_name)
+        primary_key = list(model.__table__.primary_key.columns)[0]
+        query = filtered_database_query(model, q, customer_id, template_id, payment_mode)
         with factory() as session:
             total = session.scalar(select(func.count()).select_from(query.subquery()))
             records = list(session.scalars(query.order_by(primary_key.desc()).offset(offset).limit(limit)))
@@ -490,7 +507,11 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     .where(Pattern.template_id.in_([record.id for record in records])).group_by(Pattern.template_id))}
                 for item in items:
                     item['link_count'], item['customer_count'] = counts.get(item['id'], (0, 0))
-            return {'total': total, 'items': items}
+            result = {'total': total, 'items': items}
+            if model is PaymentTemplate:
+                result['link_total'] = session.scalar(select(func.count()).select_from(Pattern).where(
+                    Pattern.template_id.in_(query.with_only_columns(PaymentTemplate.id))))
+            return result
 
     @api.get('/database/tables/{table_name}/rows/{row_key:path}')
     def database_row_detail(table_name: str, row_key: str):
@@ -511,7 +532,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
             knowledge_edit_lock(session)
             template = session.get(PaymentTemplate, template_id)
             if template is None:
-                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+                raise HTTPException(404, 'Không tìm thấy mẫu giao dịch.')
             template.display_name, template.description = body.display_name.strip(), body.description.strip()
             return {'id': template.id, 'updated': True}
 
@@ -521,12 +542,30 @@ def create_app(engine=None, core=None, runtime_dir=None):
             knowledge_edit_lock(session)
             template = session.get(PaymentTemplate, template_id)
             if template is None:
-                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+                raise HTTPException(404, 'Không tìm thấy mẫu giao dịch.')
             route = payment_route('', **body.model_dump())
             for key, value in route.items():
                 setattr(template, key, value)
             result = session.execute(update(Pattern).where(Pattern.template_id == template_id).values(**route))
             return {'id': template_id, 'updated_links': result.rowcount, **route}
+
+    @api.post('/knowledge/templates/payment/bulk')
+    def set_filtered_template_payment(body: BulkTemplatePaymentInput):
+        with job_lock, review_lock, factory.begin() as session:
+            knowledge_edit_lock(session)
+            matches = filtered_database_query(PaymentTemplate, body.q, payment_mode=body.filter_payment_mode)
+            template_ids = matches.with_only_columns(PaymentTemplate.id)
+            count = session.scalar(select(func.count()).select_from(matches.subquery()))
+            links = session.scalar(select(func.count()).select_from(Pattern).where(Pattern.template_id.in_(template_ids)))
+            if count != body.expected_count or links != body.expected_links:
+                raise HTTPException(409, 'Danh sách mẫu hoặc liên kết đã thay đổi. Làm mới danh sách rồi xác nhận lại.')
+            route = payment_route('', body.payment_mode, body.provider_kind, body.provider_name)
+            # Update links before changing template fields used by the search/filter.
+            session.execute(update(Pattern).where(Pattern.template_id.in_(template_ids)).values(**route),
+                            execution_options={'synchronize_session': False})
+            session.execute(update(PaymentTemplate).where(PaymentTemplate.id.in_(template_ids)).values(**route),
+                            execution_options={'synchronize_session': False})
+            return {'updated_templates': count, 'updated_links': links, **route}
 
     @api.delete('/knowledge/templates/{template_id}')
     def remove_template(template_id: int):
@@ -534,9 +573,9 @@ def create_app(engine=None, core=None, runtime_dir=None):
             knowledge_edit_lock(session)
             template = session.get(PaymentTemplate, template_id)
             if template is None:
-                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+                raise HTTPException(404, 'Không tìm thấy mẫu giao dịch.')
             if session.scalar(select(Pattern.id).where(Pattern.template_id == template_id).limit(1)):
-                raise HTTPException(409, 'Mẫu dùng chung còn liên kết khách hàng. Xóa hoặc chuyển liên kết trước khi xóa mẫu.')
+                raise HTTPException(409, 'Mẫu giao dịch còn liên kết khách hàng. Xóa hoặc chuyển liên kết trước khi xóa mẫu.')
             session.delete(template)
             return {'deleted': True}
 
@@ -865,26 +904,17 @@ def create_app(engine=None, core=None, runtime_dir=None):
     def standard_layouts():
         return STANDARD_LAYOUTS
 
-    @api.get('/templates/{kind}.xlsx')
-    def download_layout(kind: str):
-        if kind not in STANDARD_LAYOUTS:
-            raise HTTPException(404, 'Không tìm thấy bố cục mẫu.')
-        return temporary_download(f'layout-{kind}.xlsx',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            lambda path: layout_template(path, kind))
-
-    def grouped_export(job_id, kind='csv', learning=False):
+    def grouped_export(job_id, kind='csv'):
         job = job_record(str(job_id))
         if job['kind'] != 'batch_classify':
             raise HTTPException(422, 'Only classification files have transaction exports')
         names = sheet_names(job)
-        prefix = 'learned' if learning else 'results'
         if kind == 'xlsx':
-            return temporary_download(f'{prefix}-{job_id}.xlsx',
+            return temporary_download(f'results-{job_id}.xlsx',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 lambda path: result_workbook(working.rows(str(job_id)), names, path))
-        return temporary_download(f'{prefix}-{job_id}.zip', 'application/zip',
-            lambda path: csv_archive(working.rows(str(job_id)), names, path, learning=learning))
+        return temporary_download(f'results-{job_id}.zip', 'application/zip',
+            lambda path: csv_archive(working.rows(str(job_id)), names, path))
 
     @api.get('/export/{job_id}')
     def export(job_id: uuid.UUID):
@@ -897,17 +927,6 @@ def create_app(engine=None, core=None, runtime_dir=None):
     @api.get('/export/{job_id}/results.xlsx')
     def export_xlsx(job_id: uuid.UUID):
         return grouped_export(job_id, kind='xlsx')
-
-    @api.get('/export/{job_id}/learning.zip')
-    def export_learning_sheets(job_id: uuid.UUID):
-        return grouped_export(job_id, learning=True)
-
-    @api.get('/export/{job_id}/learning.csv', include_in_schema=False)
-    def export_learning(job_id: uuid.UUID):
-        if job_record(str(job_id))['kind'] != 'batch_classify':
-            raise HTTPException(422, 'Only classification files have learning exports')
-        return StreamingResponse(csv_stream(working.rows(str(job_id)), learning=True), media_type='text/csv',
-            headers={'Content-Disposition': f'attachment; filename="learned-{job_id}.csv"'})
 
     # The supplied development benchmark stays available to developers, outside the admin workflow.
     @api.post('/benchmark', status_code=202, include_in_schema=False)

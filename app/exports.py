@@ -1,7 +1,5 @@
 """Disk-backed exports, grouped by original sheet, with identifiers kept as text."""
-import base64
 import csv
-import io
 from pathlib import Path
 import re
 import zipfile
@@ -15,15 +13,13 @@ RESULT_COLUMNS = ('row_index', 'date', 'raw', 'amount', 'predicted_customer_id',
     'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period',
     'extracted_name', 'extracted_names', 'name_extraction_status', 'shared_template_id',
     'shared_template_customer_count', 'payment_mode', 'provider_kind', 'provider_name')
-LEARNING_COLUMNS = ('IDKH', 'TENKH', 'NOIDUNG', 'NGAY', 'SOTIEN', 'NGANHANG',
-                    'NOIDUNG_GOC_B64', 'SHEET', 'REFERENCE', 'KIEUTHANHTOAN', 'LOAIDONVITHUHO', 'DONVITHUHO')
 RESULT_LABELS = ('Dòng gốc', 'Thời gian chuyển khoản', 'Nội dung chuyển tiền', 'Số tiền ghi có',
     'Mã khách hàng đề xuất', 'Tên khách hàng đề xuất', 'Điểm so khớp', 'Đề xuất', 'Trạng thái duyệt',
     'Mã khách hàng xác nhận', 'Tên khách hàng xác nhận', 'Đã học', 'Lý do', 'Mã mẫu lịch sử',
     'Nội dung mẫu lịch sử', 'Cấu trúc mẫu lịch sử', 'Tệp lịch sử', 'Dòng lịch sử', 'Sheet gốc',
     'Ngân hàng / kênh', 'Tham chiếu', 'Số tiền ghi nợ', 'Thông tin cần kiểm tra', 'Tệp đầu vào',
     'Kỳ thanh toán', 'Tên trích từ nội dung', 'Các tên trích từ nội dung', 'Trạng thái trích tên',
-    'Mã mẫu dùng chung', 'Số khách hàng dùng mẫu', 'Kiểu thanh toán', 'Loại đơn vị thu hộ', 'Đơn vị thu hộ')
+    'Mã mẫu giao dịch', 'Số khách hàng dùng mẫu', 'Kiểu thanh toán', 'Loại đơn vị thu hộ', 'Đơn vị thu hộ')
 DECISIONS = {'auto_accept': 'Có thể xác nhận', 'review': 'Cần duyệt',
              'manual_check': 'Kiểm tra thủ công', 'reject': 'Không ghép'}
 STATUSES = {'pending': 'Chưa duyệt', 'confirmed': 'Đã xác nhận & học', 'rejected': 'Đã từ chối'}
@@ -37,15 +33,7 @@ def csv_value(value):
     return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
 
 
-def export_values(row, learning=False):
-    if learning:
-        if row['status'] != 'confirmed' or not row['learned']:
-            return None
-        return [row['confirmed_customer_id'], row.get('confirmed_customer_name', ''), row['raw'],
-            row.get('date', ''), row.get('amount', 0), row.get('payer', 'BIDV'),
-            base64.b64encode(row['raw'].encode('utf-8')).decode('ascii'),
-            row.get('sheet', ''), row.get('reference', ''), row.get('payment_mode', ''),
-            row.get('provider_kind', ''), row.get('provider_name', '')]
+def export_values(row):
     evidence = row.get('evidence', {})
     source = evidence.get('pattern_source', {})
     return [row.get('row_index'), row.get('date'), row['raw'], row.get('amount', 0),
@@ -61,22 +49,6 @@ def export_values(row, learning=False):
         row.get('provider_kind', 'unknown'), row.get('provider_name', '')]
 
 
-def csv_stream(records, learning=False):
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    buffer.write('\ufeff')
-    writer.writerow(LEARNING_COLUMNS if learning else RESULT_COLUMNS)
-    yield buffer.getvalue()
-    for row in records:
-        values = export_values(row, learning)
-        if values is None:
-            continue
-        buffer.seek(0)
-        buffer.truncate(0)
-        writer.writerow([csv_value(value) for value in values])
-        yield buffer.getvalue()
-
-
 def sheet_names(job):
     summary = job.get('summary', {})
     # New jobs retain even unsupported/empty sheets. Old jobs have fewer details.
@@ -87,11 +59,10 @@ def sheet_names(job):
     return list(dict.fromkeys(names))
 
 
-def csv_archive(records, sheets, path, learning=False):
+def csv_archive(records, sheets, path):
     """Keep only one CSV handle open, including for very many input sheets."""
     path = Path(path)
     paths, used = {}, set()
-    columns = LEARNING_COLUMNS if learning else RESULT_COLUMNS
 
     def add_sheet(name):
         filename = portable_filename(name + '.csv', max_bytes=120)
@@ -102,7 +73,7 @@ def csv_archive(records, sheets, path, learning=False):
         used.add(filename.casefold())
         target = path.parent / filename
         with target.open('w', encoding='utf-8-sig', newline='') as output:
-            csv.writer(output).writerow(columns)
+            csv.writer(output).writerow(RESULT_COLUMNS)
         paths[name] = target
 
     for name in sheets:
@@ -110,9 +81,7 @@ def csv_archive(records, sheets, path, learning=False):
     current, output = None, None
     try:
         for row in records:
-            values = export_values(row, learning)
-            if values is None:
-                continue
+            values = export_values(row)
             name = row.get('sheet') or 'Giao dịch'
             if name not in paths:
                 add_sheet(name)
@@ -205,17 +174,3 @@ def result_workbook(records, sheets, path):
         for sheet, index in names.values():
             sheet.autofilter(0, 0, index - 1, len(RESULT_COLUMNS) - 1)
 
-
-def layout_template(path, kind):
-    """Header-only templates: no illustrative transaction can accidentally be learned."""
-    from .excel import STANDARD_LAYOUTS
-    spec = STANDARD_LAYOUTS[kind]
-    with workbook_writer(path) as workbook:
-        sheet = workbook.add_worksheet('Giao dịch' if kind == 'raw' else 'Đã xác nhận')
-        header = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#007F91'})
-        text_format = workbook.add_format({'num_format': '@'})
-        sheet.freeze_panes(1, 0)
-        for index, column in enumerate(spec['columns']):
-            sheet.set_column(index, index, 65 if column['key'] == 'NOIDUNG' else 24, text_format)
-            write_cell(sheet, 0, index, column['key'], header)
-            sheet.write_comment(0, index, column['description'])
