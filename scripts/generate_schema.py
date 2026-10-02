@@ -22,7 +22,7 @@ def capture(sql, *args, **kwargs):
 engine = create_mock_engine('postgresql+psycopg://', capture)
 Base.metadata.create_all(engine)
 header = f'''-- Standalone current schema: run this file alone for a new database.
--- No init.sql or migration 001/002 is required before or after this file.
+-- No init.sql or migration script is required before or after this file for a new database.
 -- Run inside a dedicated database as its owner / extension-capable administrator.
 -- From your Linux user shell: sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < {args.output}
 -- Windows PowerShell: psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "{args.output}"

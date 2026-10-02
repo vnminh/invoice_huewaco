@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 
 CHANNEL_WEIGHTS = {
     'customer_id': 6.0, 'exact_text': 5.0, 'identity': 5.0,
-    'structured': 3.0, 'payer': 2.0, 'name_entity': 2.0, 'postings': 1.0,
+    'structured': 3.0, 'payer': 2.0, 'name_entity': 2.0, 'shared_template': 2.0, 'postings': 1.0,
     'semantic': 1.0, 'full_text': 1.0, 'trigram': 1.0, 'customer_name': 1.0,
 }
 CHANNEL_LABELS = {
@@ -12,6 +12,7 @@ CHANNEL_LABELS = {
     'identity': 'hợp đồng hoặc số khách hàng đã xác nhận',
     'structured': 'mã chữ/số hoặc chi tiết thanh toán', 'payer': 'tài khoản trả tiền',
     'name_entity': 'tên trích từ nội dung',
+    'shared_template': 'bố cục mẫu dùng chung',
     'postings': 'từ khóa và tên đã học', 'semantic': 'nội dung tương đồng',
     'full_text': 'tìm kiếm nội dung', 'trigram': 'nội dung gần giống',
     'customer_name': 'tên khách hàng',

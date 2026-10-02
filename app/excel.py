@@ -37,6 +37,9 @@ class ExcelTransaction:
     label_status: str = 'unlabeled'
     sheet: str = ''
     validation_errors: list[str] = field(default_factory=list)
+    payment_mode: str = ''
+    provider_kind: str = ''
+    provider_name: str = ''
 
     def dict(self):
         return asdict(self)
@@ -118,37 +121,89 @@ def label_status(customer_id, name):
 # Aliases use folded text; columns are determined per sheet, never by bank name.
 HEADER_ALIASES = {
     'raw': ('mo ta giao dich', 'mo ta', 'dien giai', 'noi dung giao dich', 'noi dung',
-            'lenh goc ngan hang', 'ebl', 'noidung', 'transaction description', 'description', 'trans detail'),
+            'lenh goc ngan hang', 'ebl', 'noidung', 'transaction description', 'description', 'trans detail',
+            'transaction details', 'narration', 'remarks', 'details'),
     'date': ('ngay gio giao dich', 'thoi gian giao dich', 'ngay giao dich', 'ngay chuyen nh',
              'ngay chuyen', 'ngay hieu luc', 'ngay gia tri', 'ngay hach toan', 'ngay',
-             'transaction date time', 'transaction date', 'value date', 'accounting date', 'date'),
+             'transaction date time', 'transaction date', 'value date', 'accounting date', 'date',
+             'ngay gd', 'ngaygio', 'posting date', 'date time'),
     'credit': ('so tien ghi co', 'so tien co', 'phat sinh co', 'ghi co', 'so tien gui vao',
-               'credit amount', 'credit', 'co'),
+               'credit amount', 'credit', 'co', 'ghico', 'credit turnover', 'deposit', 'amount credit', 'so tien credit'),
     'debit': ('so tien ghi no', 'so tien no', 'phat sinh no', 'ghi no', 'so tien rut ra',
-              'debit amount', 'debit', 'no'),
+              'debit amount', 'debit', 'no', 'ghino', 'debit turnover', 'withdrawal', 'amount debit', 'so tien debit'),
     'amount': ('so tien giao dich', 'so tien thanh toan', 'so tien', 'sotien', 'transaction amount', 'amount'),
     'reference': ('so tham chieu', 'so giao dich', 'so gd', 'so but toan', 'but toan', 'so id',
                   'so ref', 'ma giao dich', 'ma tham chieu', 'reference no', 'reference',
                   'transaction number', 'transaction id', 'trans id'),
     'customer_id': ('idkh', 'id kh', 'ma khach hang', 'customer id'),
     'customer_name': ('ten khach hang', 'ten kh', 'tenkh', 'don vi chuyen tien', 'customer name'),
-    'payer': ('hinh thuc', 'ngan hang', 'kenh thanh toan', 'bank'),
+    'payer': ('hinh thuc', 'ngan hang', 'kenh thanh toan', 'bank', 'nganhang'),
+    'payment_mode': ('kieuthanhtoan', 'kieu thanh toan', 'payment mode'),
+    'provider_kind': ('loaidonvithuho', 'loai don vi thu ho', 'provider kind'),
+    'provider_name': ('donvithuho', 'don vi thu ho', 'provider name'),
+}
+
+STANDARD_LAYOUTS = {
+    'raw': {'title': 'Bố cục chuẩn cho đối soát', 'columns': [
+        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản: dd/mm/yyyy HH:MM:SS hoặc yyyy-mm-dd. Không phải kỳ hóa đơn.', 'required': True},
+        {'key': 'NOIDUNG', 'description': 'Giữ nguyên toàn bộ nội dung chuyển tiền, cả chữ và số.', 'required': True},
+        {'key': 'GHICO', 'description': 'Số tiền nhận vào, không âm. Dùng ô số hoặc chuỗi số; để trống/0 nếu chỉ ghi nợ.', 'required': True},
+        {'key': 'GHINO', 'description': 'Số tiền chuyển ra, không âm. Để trống/0 nếu chỉ ghi có.', 'required': False},
+        {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng. Định dạng Text để giữ số 0 đầu và mã dài.', 'required': False},
+        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh giao dịch; để trống thì dùng tên sheet.', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = dịch vụ thu hộ; self = khách hàng tự trả; unknown = chưa rõ. Trống để nhận diện khi có dấu hiệu rõ.', 'required': False},
+        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown; chỉ mô tả đơn vị thu hộ.', 'required': False},
+        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra; không phải mã khách hàng.', 'required': False}]},
+    'confirmed': {'title': 'Bố cục chuẩn cho học dữ liệu đã xác nhận', 'columns': [
+        {'key': 'IDKH', 'description': 'Mã khách hàng đã kiểm tra; định dạng Text để giữ đủ số và số 0 đầu. Nhãn ko được bỏ qua.', 'required': True},
+        {'key': 'TENKH', 'description': 'Tên khách hàng đã kiểm tra. Có thể để trống khi bổ sung mẫu cho hồ sơ đã có.', 'required': False},
+        {'key': 'NOIDUNG', 'description': 'Nội dung chuyển tiền nguyên văn, thuộc đúng khách hàng đã xác nhận.', 'required': True},
+        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản: dd/mm/yyyy HH:MM:SS hoặc yyyy-mm-dd.', 'required': False},
+        {'key': 'SOTIEN', 'description': 'Số tiền thanh toán không âm, để trống thì 0.', 'required': False},
+        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh trả tiền; để trống thì dùng tên sheet.', 'required': False},
+        {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng, định dạng Text.', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = dịch vụ thu hộ; self = khách hàng tự trả; unknown = chưa rõ. Trống để nhận diện khi có dấu hiệu rõ.', 'required': False},
+        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False},
+        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra.', 'required': False}]},
 }
 
 
-def detect_layout(values):
-    columns, priorities = {}, {}
+def layout_guidance(kind):
+    required = 'NGAY, NOIDUNG, GHICO (GHINO nếu có)' if kind == 'raw' else 'IDKH, NOIDUNG (TENKH nếu có)'
+    return ('Không nhận diện được sheet phù hợp. Chỉnh sheet giao dịch theo bố cục chuẩn với tiêu đề '
+            + required + ' trên một dòng, dữ liệu ở các dòng bên dưới; không gộp ô tiêu đề. '
+            'Có thể tải tệp mẫu ở khu vực tải dữ liệu hoặc Hướng dẫn sử dụng.')
+
+
+def header_columns(values):
+    columns, priorities, ambiguous = {}, {}, set()
     for column, value in values.items():
         label = ' '.join(re.findall(r'[a-z0-9]+', fold(value)))
+        def matches(alias):
+            return (label == alias or (' ' in alias and label.startswith(alias + ' '))
+                    or label in (alias + ' debit', alias + ' credit'))
         for role, aliases in HEADER_ALIASES.items():
+            if role == 'amount' and any(matches(alias) for financial in ('credit', 'debit')
+                                        for alias in HEADER_ALIASES[financial]):
+                continue  # "Số tiền ghi có/nợ" is not a competing generic amount column.
             for priority, alias in enumerate(aliases):
                 if role == 'debit' and alias == 'no' and label == 'no' and 'ợ' not in str(value).lower():
                     continue  # English "No." is a row counter, not a debit column.
                 # One-word labels must not match narrative cells (e.g. "co phan").
-                if label == alias or (' ' in alias and label.startswith(alias + ' ')) or label in (alias + ' debit', alias + ' credit'):
+                if matches(alias):
                     if role not in priorities or priority < priorities[role]:
                         columns[role], priorities[role] = column, priority
+                        ambiguous.discard(role)
+                    elif priority == priorities[role] and column != columns[role]:
+                        ambiguous.add(role)
                     break
+    return {role: column for role, column in columns.items() if role not in ambiguous}, ambiguous
+
+
+def detect_layout(values):
+    columns, ambiguous = header_columns(values)
+    if ambiguous.intersection({'raw', 'date', 'credit', 'debit', 'amount', 'customer_id'}):
+        return None  # Several equally named financial/identity columns are not safe to guess.
     if 'customer_id' in columns and 'raw' in columns:
         # Historical FN fixtures have some blank header cells; retain that established layout.
         if columns['customer_id'] == 'C' and columns['raw'] == 'G':
@@ -244,7 +299,9 @@ class ConfirmedCsv:
         return ExcelTransaction(row_index, raw, date=date_text(record.get('NGAY')),
             amount=amount, customer_id=customer_id, customer_name=record.get('TENKH') or '',
             payer=record.get('NGANHANG') or record.get('SHEET') or 'BIDV', source=self.path.name,
-            reference=record.get('REFERENCE') or '', sheet=record.get('SHEET') or 'CSV', label_status=status)
+            reference=record.get('REFERENCE') or '', sheet=record.get('SHEET') or 'CSV', label_status=status,
+            payment_mode=record.get('KIEUTHANHTOAN') or '', provider_kind=record.get('LOAIDONVITHUHO') or '',
+            provider_name=record.get('DONVITHUHO') or '')
 
 
 class StreamingWorkbook:
@@ -365,14 +422,30 @@ class StreamingWorkbook:
     def sheet_layouts(self):
         if hasattr(self, '_layouts'):
             return self._layouts
-        layouts = {}
+        layouts, diagnostics = {}, {}
         for sheet in self.sheets:
             self.check_cancel()
             # Header probing must not report the same bad row again during the real scan.
             source = self.rows(sheet, report_errors=False)
+            previous, previous_index, best_columns, best_ambiguous = {}, 0, {}, set()
             try:
                 for row_index, values in source:
+                    columns, ambiguous = header_columns(values)
+                    if len(columns) + len(ambiguous) > len(best_columns) + len(best_ambiguous):
+                        best_columns, best_ambiguous = columns, ambiguous
                     layout = detect_layout(values)
+                    header_text_only = not any(isinstance(value, (int, float)) or
+                        valid_date(date_text(value)) or re.fullmatch(r'[+-]?\d+(?:[.,]\d+)?', str(value).strip())
+                        for value in values.values())
+                    if (not layout and header_text_only and columns and row_index == previous_index + 1
+                            and len(header_columns(previous)[0]) >= 2):
+                        # Combine adjacent header lines conservatively, only when
+                        # they add recognized roles. Numeric data are never headers.
+                        combined = {column: ' '.join(str(value) for value in (previous.get(column, ''), values.get(column, '')) if value != '')
+                                    for column in previous.keys() | values.keys()}
+                        merged_columns, _ = header_columns(combined)
+                        if len(merged_columns) > len(header_columns(previous)[0]):
+                            layout = detect_layout(combined)
                     if layout:
                         layouts[sheet] = {**layout, 'header_row': row_index}
                         break
@@ -382,9 +455,12 @@ class StreamingWorkbook:
                         break
                     if row_index >= 100:
                         break
+                    previous, previous_index = values, row_index
             finally:
                 source.close()
+            diagnostics[sheet] = {'detected_columns': best_columns, 'ambiguous_columns': sorted(best_ambiguous)}
         self._layouts = layouts
+        self._layout_diagnostics = diagnostics
         return layouts
 
     def raw_sheets(self):
@@ -395,9 +471,25 @@ class StreamingWorkbook:
 
     def skipped_sheets(self, kind):
         layouts = self.sheet_layouts()
-        return [{'sheet': sheet, 'reason': 'confirmed_layout' if layouts.get(sheet, {}).get('kind') == 'confirmed'
-                 else 'raw_layout' if layouts.get(sheet, {}).get('kind') == 'raw' else 'unsupported_layout'}
-                for sheet in self.sheets if layouts.get(sheet, {}).get('kind') != kind]
+        skipped = []
+        for sheet in self.sheets:
+            if layouts.get(sheet, {}).get('kind') == kind:
+                continue
+            details = self._layout_diagnostics.get(sheet, {})
+            columns = details.get('detected_columns', {})
+            reason = 'confirmed_layout' if layouts.get(sheet, {}).get('kind') == 'confirmed' else \
+                     'raw_layout' if layouts.get(sheet, {}).get('kind') == 'raw' else \
+                     'ambiguous_layout' if details.get('ambiguous_columns') else 'unsupported_layout'
+            missing = []
+            for role, label in ((('raw', 'NOIDUNG'), ('date', 'NGAY')) if kind == 'raw' else
+                                (('raw', 'NOIDUNG'), ('customer_id', 'IDKH'))):
+                if role not in columns:
+                    missing.append(label)
+            if kind == 'raw' and not {'credit', 'amount'}.intersection(columns):
+                missing.append('GHICO hoặc SOTIEN có dấu')
+            skipped.append({'sheet': sheet, 'reason': reason, **details, 'missing_columns': missing,
+                            'suggested_layout': kind, 'guidance': layout_guidance(kind)})
+        return skipped
 
     def transactions(self, sheet=None, kind='auto'):
         if kind not in ('auto', 'raw', 'confirmed'):
@@ -406,7 +498,7 @@ class StreamingWorkbook:
         if sheet is None:
             selected = [name for name, layout in layouts.items() if kind == 'auto' or layout['kind'] == kind]
             if not selected:
-                raise ValueError('No supported transaction sheets found')
+                raise ValueError(layout_guidance('raw' if kind == 'auto' else kind))
             for name in selected:
                 yield from self.transactions(name, kind)
             return
@@ -414,7 +506,7 @@ class StreamingWorkbook:
             raise ValueError(f'Sheet {sheet!r} not found. Available: {", ".join(self.sheets)}')
         layout = layouts.get(sheet)
         if not layout:
-            raise ValueError(f'Could not identify transaction headers in sheet {sheet!r}')
+            raise ValueError(f'Sheet {sheet!r}: ' + layout_guidance('raw' if kind == 'auto' else kind))
         if kind != 'auto' and layout['kind'] != kind:
             raise ValueError('Batch classification requires raw bank layout; upload the unfiltered file')
         for row_index, values in self.rows(sheet):
@@ -455,7 +547,9 @@ class StreamingWorkbook:
                 raise ValueError('Số tiền của dòng học chưa hợp lệ.')
             return ExcelTransaction(row_index, raw, date=date_text(get('date')),
                 amount=amount, customer_id=customer_id, customer_name=name or customer_id,
-                payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, label_status=status)
+                payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, label_status=status,
+                payment_mode=str(get('payment_mode')).strip(), provider_kind=str(get('provider_kind')).strip(),
+                provider_name=str(get('provider_name')).strip())
         reference = str(get('reference')).strip()
         if not get('date') and not reference:
             return None  # Totals/closing balances.
@@ -493,7 +587,9 @@ class StreamingWorkbook:
                 if signed > 0 and not token.startswith('+'):
                     errors.append('Chưa xác định được chiều ghi có/ghi nợ; cần kiểm tra thủ công.')
         return ExcelTransaction(row_index, raw, reference, date, amount, debit,
-            payer=sheet, source=source, sheet=sheet, validation_errors=errors)
+            payer=str(get('payer') or sheet).strip(), source=source, sheet=sheet, validation_errors=errors,
+            payment_mode=str(get('payment_mode')).strip(), provider_kind=str(get('provider_kind')).strip(),
+            provider_name=str(get('provider_name')).strip())
 
     def batches(self, sheet=None, kind='auto', batch_size=1000):
         if not 1 <= batch_size <= 5000:

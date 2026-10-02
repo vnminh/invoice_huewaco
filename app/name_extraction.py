@@ -1,4 +1,4 @@
-"""Local Vietnamese NER for reconciliation; never rewrites text or identifiers."""
+"""Local Vietnamese NER; never rewrites text or numeric identifiers."""
 from collections import OrderedDict
 from copy import deepcopy
 import hashlib
@@ -86,6 +86,11 @@ class NameExtractor:
                 logger.warning('NER unavailable during model loading (%s); reconciliation continues', self.failure)
                 return False
         return True
+
+    def learning_signature(self):
+        # Completed imports may need alias enrichment without relearning patterns.
+        return hashlib.sha256(repr(('name-alias-v1', self.enabled, self.name,
+                                   self.revision, self.min_score)).encode('utf-8')).hexdigest()
 
     def _inputs(self, raw):
         # Mask numeric/code tokens only in the model input, keeping every source

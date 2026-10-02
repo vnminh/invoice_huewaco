@@ -225,7 +225,8 @@ class WorkingFiles:
     def finish_review(self, record):
         with self.lock:
             folder = self.root / record['job_id']
-            overlay = {key: record[key] for key in ('confirmed_customer_id', 'confirmed_customer_name', 'status', 'learned', 'reviewed_at')}
+            overlay = {key: record[key] for key in ('confirmed_customer_id', 'confirmed_customer_name', 'status', 'learned', 'reviewed_at',
+                       'payment_mode', 'provider_kind', 'provider_name', 'payment_mode_evidence') if key in record}
             self._write(folder / 'reviews' / (str(record['id']) + '.json'), overlay)
             location = self.locations[record['id']]
             self.locations[record['id']] = (*location[:3], record['status'])

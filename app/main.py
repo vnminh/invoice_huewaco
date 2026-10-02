@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import base64
 import csv
 import io
 import json
 import logging
 import os
 from pathlib import Path
+import tempfile
 from threading import Event, RLock
+from typing import Literal
 import uuid
 import zipfile
 
@@ -18,15 +19,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import String, cast, delete, func, or_, select, text, update
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
+from starlette.background import BackgroundTask
 
 from .benchmark import run_benchmark, safe_csv
 from .core import Core, id_key, learning_receipt, posting_in, text_tokens
 from .db import (Alias, Base, Customer, HardNegative, KnowledgeReceipt, NumericFeature,
-                 NumericSlot, Pattern, Payer, Posting, default_url, make_engine, sessions)
-from .excel import ExcelTransaction, StreamingWorkbook
+                 NumericSlot, Pattern, PaymentTemplate, Payer, Posting, default_url, make_engine, sessions)
+from .excel import ExcelTransaction, StreamingWorkbook, STANDARD_LAYOUTS, layout_guidance
+from .exports import csv_archive, csv_stream, layout_template, result_workbook, sheet_names
 from .knowledge import ImportCancelled, import_confirmed
 from .normalize import fold
 from .name_extraction import NameExtractor
+from .payment_templates import payment_route
 from .payment_period import with_payment_period
 from .platform_utils import portable_filename
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
@@ -58,6 +62,9 @@ class FeedbackInput(BaseModel):
     accepted: bool
     correct_customer_id: str | None = Field(default=None, min_length=1, max_length=100)
     customer_name: str = Field(default='', max_length=300)
+    payment_mode: Literal['', 'unknown', 'proxy', 'self'] = ''
+    provider_kind: Literal['', 'unknown', 'bank', 'wallet', 'other'] = ''
+    provider_name: str = Field(default='', max_length=300)
 
 
 class BulkFeedbackInput(BaseModel):
@@ -91,6 +98,20 @@ class CustomerCreateInput(CustomerNameInput):
 
 class PatternEditInput(ClassifyInput):
     customer_id: str = Field(min_length=1, max_length=100)
+    payment_mode: Literal['', 'unknown', 'proxy', 'self'] = ''
+    provider_kind: Literal['', 'unknown', 'bank', 'wallet', 'other'] = ''
+    provider_name: str = Field(default='', max_length=300)
+
+
+class PaymentRouteInput(BaseModel):
+    payment_mode: Literal['unknown', 'proxy', 'self']
+    provider_kind: Literal['unknown', 'bank', 'wallet', 'other'] = 'unknown'
+    provider_name: str = Field(default='', max_length=300)
+
+
+class TemplateEditInput(BaseModel):
+    display_name: str = Field(default='', max_length=300)
+    description: str = Field(default='', max_length=4000)
 
 
 def create_app(engine=None, core=None, runtime_dir=None):
@@ -143,9 +164,13 @@ def create_app(engine=None, core=None, runtime_dir=None):
             if body.accepted and not chosen:
                 raise ValueError('Choose a customer before accepting')
             payload = {'accepted': body.accepted, 'correct_customer_id': chosen,
-                       'customer_name': body.customer_name.strip() if body.accepted else ''}
+                       'customer_name': body.customer_name.strip() if body.accepted else '',
+                       'payment_mode': body.payment_mode, 'provider_kind': body.provider_kind,
+                       'provider_name': body.provider_name}
             working.begin_review(row, payload)
             try:
+                if body.accepted:
+                    core.prepare_names([row['raw']])
                 with factory.begin() as session:
                     lock_writes(session)
                     result = core.review(session, row, **payload)
@@ -166,7 +191,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                 raise ImportCancelled()
         def progress(counts):
             working.update_job(job_id, progress=counts.get('processed', counts.get('heldout_rows', counts.get('training_rows', 0))),
-                               summary={**counts, **row_errors.summary()})
+                               summary={**working.job(job_id)['summary'], **counts, **row_errors.summary()})
         try:
             with job_lock:
                 check_cancel()
@@ -195,9 +220,10 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     skipped_sheets = workbook.skipped_sheets('raw')
                     sheet_counts = {sheet: 0 for sheet in sheets}
                     progress({'processed': 0, 'decisions': decisions, 'sheets': sheets,
-                              'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets, 'phase': 'reading'})
+                              'input_sheets': list(workbook.sheets), 'sheet_counts': sheet_counts,
+                              'skipped_sheets': skipped_sheets, 'phase': 'reading'})
                     if not sheets:
-                        raise ValueError('No supported bank transaction sheets found')
+                        raise ValueError(layout_guidance('raw'))
                     # Publish small groups per sheet, instead of showing zero throughout
                     # preparation and matching of a 1,000-row batch across multiple sheets.
                     for sheet in sheets:
@@ -231,7 +257,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                                 result = {'decision': 'reject', 'score': 0, 'customer_id': None, 'customer_name': None,
                                                     'evidence': {'reason': 'Non-credit bank transaction', 'reason_vi': 'Giao dịch ghi nợ hoặc không có tiền ghi có.'}}
                                             else:
-                                                result = core.classify(session, row.raw, row.payer)
+                                                result = core.classify(session, row.raw, row.payer, payment_mode=row.payment_mode,
+                                                                      provider_kind=row.provider_kind, provider_name=row.provider_name)
                                     except (*ROW_DATA_ERRORS, DataError, IntegrityError) as error:
                                         row_errors.record(row.sheet, row.row_index, error, stage='classify')
                                         continue
@@ -250,6 +277,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                                       'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets,
                                       'phase': 'classifying', 'current_sheet': sheet, 'current_row': batch[-1].row_index})
                 summary = {'processed': total, 'decisions': decisions, 'sheets': sheets,
+                           'input_sheets': list(workbook.sheets),
                            'sheet_counts': sheet_counts, 'skipped_sheets': skipped_sheets}
             with job_lock:
                 working.update_job(job_id, status='completed', summary={**summary, **row_errors.summary()}, progress=total)
@@ -375,13 +403,15 @@ def create_app(engine=None, core=None, runtime_dir=None):
     @api.post('/knowledge/patterns', status_code=201)
     def add_pattern(body: PatternEditInput):
         try:
+            core.prepare_names([body.transaction])
             with job_lock, review_lock, factory.begin() as session:
                 knowledge_edit_lock(session)
                 customer = session.get(Customer, body.customer_id.strip())
                 if customer is None:
                     raise HTTPException(404, 'Customer not found')
                 row = ExcelTransaction(0, body.transaction, date=body.transaction_date, amount=body.amount,
-                    payer=body.payer, source='Mẫu do quản trị viên thêm', label_status='confirmed')
+                    payer=body.payer, source='Mẫu do quản trị viên thêm', label_status='confirmed',
+                    payment_mode=body.payment_mode, provider_kind=body.provider_kind, provider_name=body.provider_name)
                 learned = core.learn(session, row, customer.id, customer.canonical_name,
                     receipt_key=learning_receipt(row.raw, customer.id, row.date, row.amount, row.payer))
                 return {'learned': learned, 'customer_id': customer.id}
@@ -425,6 +455,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
     @api.get('/database/tables/{table_name}/rows')
     def database_rows(table_name: str, q: str = Query(default='', max_length=300),
                       customer_id: str | None = Query(default=None, max_length=100),
+                      template_id: int | None = Query(default=None, ge=1),
                       offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100)):
         model = database_model(table_name)
         primary_key = list(model.__table__.primary_key.columns)[0]
@@ -433,10 +464,14 @@ def create_app(engine=None, core=None, runtime_dir=None):
             if 'customer_id' not in model.__table__.columns:
                 raise HTTPException(422, 'This table has no customer identifier')
             query = query.where(model.__table__.columns.customer_id == customer_id)
+        if template_id is not None:
+            if 'template_id' not in model.__table__.columns:
+                raise HTTPException(422, 'Nhóm dữ liệu này không có liên kết mẫu chung.')
+            query = query.where(model.__table__.columns.template_id == template_id)
         if q.strip():
             # Search scalar fields; do not turn large JSON/vector data into a full-table text scan.
             searchable = [func.lower(cast(column, String)).contains(
-                              fold(q.strip()) if column.name in ('normalized_name', 'normalized_alias', 'normalized_text')
+                              fold(q.strip()) if column.name in ('normalized_name', 'normalized_alias', 'normalized_text', 'template_text', 'structure')
                               else q.strip().lower(), autoescape=True)
                           for column in model.__table__.columns if str(column.type) not in ('JSON', 'JSONB', 'vector(384)')]
             query = query.where(or_(*searchable))
@@ -449,6 +484,12 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     Pattern.customer_id.in_([record.id for record in records])).group_by(Pattern.customer_id)).all())
                 for item in items:
                     item['pattern_count'] = counts.get(item['id'], 0)
+            if model is PaymentTemplate:
+                counts = {template_id: (links, customers) for template_id, links, customers in session.execute(
+                    select(Pattern.template_id, func.count(), func.count(func.distinct(Pattern.customer_id)))
+                    .where(Pattern.template_id.in_([record.id for record in records])).group_by(Pattern.template_id))}
+                for item in items:
+                    item['link_count'], item['customer_count'] = counts.get(item['id'], (0, 0))
             return {'total': total, 'items': items}
 
     @api.get('/database/tables/{table_name}/rows/{row_key:path}')
@@ -458,7 +499,57 @@ def create_app(engine=None, core=None, runtime_dir=None):
             item = database_row(model, database_record(session, model, row_key))
             if model is Customer:
                 item['pattern_count'] = session.scalar(select(func.count()).select_from(Pattern).where(Pattern.customer_id == item['id']))
+            if model is PaymentTemplate:
+                item['link_count'], item['customer_count'] = session.execute(
+                    select(func.count(), func.count(func.distinct(Pattern.customer_id)))
+                    .where(Pattern.template_id == item['id'])).one()
             return item
+
+    @api.patch('/knowledge/templates/{template_id}')
+    def edit_template(template_id: int, body: TemplateEditInput):
+        with job_lock, review_lock, factory.begin() as session:
+            knowledge_edit_lock(session)
+            template = session.get(PaymentTemplate, template_id)
+            if template is None:
+                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+            template.display_name, template.description = body.display_name.strip(), body.description.strip()
+            return {'id': template.id, 'updated': True}
+
+    @api.patch('/knowledge/templates/{template_id}/payment')
+    def set_template_payment(template_id: int, body: PaymentRouteInput):
+        with job_lock, review_lock, factory.begin() as session:
+            knowledge_edit_lock(session)
+            template = session.get(PaymentTemplate, template_id)
+            if template is None:
+                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+            route = payment_route('', **body.model_dump())
+            for key, value in route.items():
+                setattr(template, key, value)
+            result = session.execute(update(Pattern).where(Pattern.template_id == template_id).values(**route))
+            return {'id': template_id, 'updated_links': result.rowcount, **route}
+
+    @api.delete('/knowledge/templates/{template_id}')
+    def remove_template(template_id: int):
+        with job_lock, review_lock, factory.begin() as session:
+            knowledge_edit_lock(session)
+            template = session.get(PaymentTemplate, template_id)
+            if template is None:
+                raise HTTPException(404, 'Không tìm thấy mẫu dùng chung.')
+            if session.scalar(select(Pattern.id).where(Pattern.template_id == template_id).limit(1)):
+                raise HTTPException(409, 'Mẫu dùng chung còn liên kết khách hàng. Xóa hoặc chuyển liên kết trước khi xóa mẫu.')
+            session.delete(template)
+            return {'deleted': True}
+
+    @api.patch('/knowledge/patterns/{pattern_id}/payment')
+    def edit_link_payment(pattern_id: int, body: PaymentRouteInput):
+        with job_lock, review_lock, factory.begin() as session:
+            knowledge_edit_lock(session)
+            pattern = session.get(Pattern, pattern_id)
+            if pattern is None:
+                raise HTTPException(404, 'Historical pattern not found')
+            for key, value in payment_route(pattern.raw_example, **body.model_dump()).items():
+                setattr(pattern, key, value)
+            return {'id': pattern.id, 'updated': True}
 
     def knowledge_edit_lock(session):
         lock_writes(session)
@@ -482,6 +573,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
                 session.delete(old_alias)
             if new_alias:
                 new_alias.alias = body.name
+                new_alias.confidence = 1.0
             else:
                 session.add(Alias(customer_id=customer_id, alias=body.name, normalized_alias=new_name, confidence=1.0))
             customer.canonical_name = body.name
@@ -521,6 +613,7 @@ def create_app(engine=None, core=None, runtime_dir=None):
     @api.patch('/knowledge/patterns/{pattern_id}')
     def edit_pattern(pattern_id: int, body: PatternEditInput):
         try:
+            core.prepare_names([body.transaction])
             with job_lock, review_lock, factory.begin() as session:
                 knowledge_edit_lock(session)
                 pattern = session.get(Pattern, pattern_id)
@@ -538,7 +631,8 @@ def create_app(engine=None, core=None, runtime_dir=None):
                     source += ' (đã sửa thủ công)'
                 transaction = ExcelTransaction(row_index=pattern.source_row, raw=body.transaction,
                     date=pattern.example_date, source=source, payer=payer.payer_name if payer else 'BIDV',
-                    customer_id=customer.id, customer_name=customer.canonical_name, label_status='confirmed')
+                    customer_id=customer.id, customer_name=customer.canonical_name, label_status='confirmed',
+                    payment_mode=pattern.payment_mode, provider_kind=pattern.provider_kind, provider_name=pattern.provider_name)
                 core.check_model(session)
                 delete_patterns(session, [pattern_id])
                 core.learn(session, transaction, customer.id, customer.canonical_name,
@@ -751,52 +845,64 @@ def create_app(engine=None, core=None, runtime_dir=None):
                      q: str = Query(default='', max_length=300)):
         return working.query(offset, limit, decision, status, str(job_id) if job_id else None, q)
 
-    def csv_stream(records, learning=False):
-        yield '\ufeff'
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        if learning:
-            writer.writerow(['IDKH', 'TENKH', 'NOIDUNG', 'NGAY', 'SOTIEN', 'NGANHANG', 'NOIDUNG_GOC_B64', 'SHEET', 'REFERENCE'])
-        else:
-            writer.writerow(['row_index', 'date', 'raw', 'amount', 'predicted_customer_id', 'customer_name', 'score',
-                'decision', 'status', 'confirmed_customer_id', 'confirmed_customer_name', 'learned', 'reason',
-                'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row',
-                'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period',
-                'extracted_name', 'extracted_names', 'name_extraction_status'])
-        yield buffer.getvalue()
-        for row in records:
-            buffer.seek(0); buffer.truncate(0)
-            if learning:
-                if row['status'] != 'confirmed' or not row['learned']:
-                    continue
-                writer.writerow([safe_csv(row['confirmed_customer_id']), safe_csv(row.get('confirmed_customer_name')),
-                    safe_csv(row['raw']), row['date'], row['amount'], safe_csv(row.get('payer', 'BIDV')),
-                    base64.b64encode(row['raw'].encode('utf-8')).decode('ascii'),
-                    safe_csv(row.get('sheet')), safe_csv(row.get('reference'))])
-            else:
-                evidence = row.get('evidence', {})
-                source = evidence.get('pattern_source', {})
-                writer.writerow([row.get('row_index'), row['date'], safe_csv(row['raw']), row['amount'],
-                    safe_csv(row.get('customer_id')), safe_csv(row.get('customer_name')), row['score'], row['decision'], row['status'],
-                    safe_csv(row.get('confirmed_customer_id')), safe_csv(row.get('confirmed_customer_name')), row['learned'],
-                    safe_csv(evidence.get('reason_vi') or evidence.get('reason')), evidence.get('matched_pattern_id'),
-                    safe_csv(evidence.get('matched_pattern')), safe_csv(evidence.get('matched_template')),
-                    safe_csv(source.get('file')), source.get('row'), safe_csv(row.get('sheet')),
-                    safe_csv(row.get('payer')), safe_csv(row.get('reference')), row.get('debit', 0),
-                    safe_csv(' '.join(row.get('validation_errors', []))), safe_csv(row.get('source')),
-                    safe_csv(row.get('payment_period')), safe_csv(row.get('extracted_name')),
-                    safe_csv('; '.join(row.get('extracted_names', []))),
-                    safe_csv(row.get('name_extraction', {}).get('status'))])
-            yield buffer.getvalue()
+    def temporary_download(filename, media_type, build):
+        folder = runtime / 'exports'
+        folder.mkdir(parents=True, exist_ok=True)
+        temp = tempfile.TemporaryDirectory(prefix='download-', dir=folder)
+        path = Path(temp.name) / filename
+        try:
+            build(path)
+        except BaseException as error:
+            temp.cleanup()
+            if isinstance(error, ValueError):
+                raise HTTPException(422, str(error)) from error
+            raise
+        # Handles used for writing are closed before serving/cleaning up on Windows.
+        return FileResponse(path, media_type=media_type, filename=filename,
+                            background=BackgroundTask(temp.cleanup))
+
+    @api.get('/layouts')
+    def standard_layouts():
+        return STANDARD_LAYOUTS
+
+    @api.get('/templates/{kind}.xlsx')
+    def download_layout(kind: str):
+        if kind not in STANDARD_LAYOUTS:
+            raise HTTPException(404, 'Không tìm thấy bố cục mẫu.')
+        return temporary_download(f'layout-{kind}.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            lambda path: layout_template(path, kind))
+
+    def grouped_export(job_id, kind='csv', learning=False):
+        job = job_record(str(job_id))
+        if job['kind'] != 'batch_classify':
+            raise HTTPException(422, 'Only classification files have transaction exports')
+        names = sheet_names(job)
+        prefix = 'learned' if learning else 'results'
+        if kind == 'xlsx':
+            return temporary_download(f'{prefix}-{job_id}.xlsx',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                lambda path: result_workbook(working.rows(str(job_id)), names, path))
+        return temporary_download(f'{prefix}-{job_id}.zip', 'application/zip',
+            lambda path: csv_archive(working.rows(str(job_id)), names, path, learning=learning))
 
     @api.get('/export/{job_id}')
     def export(job_id: uuid.UUID):
-        if job_record(str(job_id))['kind'] != 'batch_classify':
-            raise HTTPException(422, 'Only classification files have transaction exports')
-        return StreamingResponse(csv_stream(working.rows(str(job_id))), media_type='text/csv',
-            headers={'Content-Disposition': f'attachment; filename="results-{job_id}.csv"'})
+        return grouped_export(job_id)
 
-    @api.get('/export/{job_id}/learning.csv')
+    @api.get('/export/{job_id}/csv.zip')
+    def export_csv_sheets(job_id: uuid.UUID):
+        return grouped_export(job_id)
+
+    @api.get('/export/{job_id}/results.xlsx')
+    def export_xlsx(job_id: uuid.UUID):
+        return grouped_export(job_id, kind='xlsx')
+
+    @api.get('/export/{job_id}/learning.zip')
+    def export_learning_sheets(job_id: uuid.UUID):
+        return grouped_export(job_id, learning=True)
+
+    @api.get('/export/{job_id}/learning.csv', include_in_schema=False)
     def export_learning(job_id: uuid.UUID):
         if job_record(str(job_id))['kind'] != 'batch_classify':
             raise HTTPException(422, 'Only classification files have learning exports')

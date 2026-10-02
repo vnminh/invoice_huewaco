@@ -11,6 +11,7 @@ Mẫu đã học vẫn có `raw_example`, nguồn và ngày ví dụ để giả
 ```mermaid
 erDiagram
     customers ||--o{ customer_aliases : aliases
+    payment_templates ||--o{ transaction_patterns : customer_links
     customers ||--o{ payer_entities : payers
     customers ||--o{ transaction_patterns : patterns
     payer_entities o|--o{ transaction_patterns : channel
@@ -24,14 +25,15 @@ erDiagram
 
 `knowledge_metadata` là bảng key/value độc lập, không có FK.
 
-## Danh mục 10 bảng
+## Danh mục 11 bảng
 
 | Bảng | Trường chính | Ràng buộc / ý nghĩa |
 | --- | --- | --- |
 | `customers` | `id VARCHAR(100)`, `canonical_name TEXT`, `normalized_name TEXT` | PK là mã dạng chuỗi; tên chuẩn hiển thị, tên bỏ dấu dùng tìm kiếm. |
-| `customer_aliases` | `id`, `customer_id`, `alias`, `normalized_alias`, `confidence` | Unique `(customer_id, normalized_alias)`; nhiều bí danh đã xác nhận. |
+| `customer_aliases` | `id`, `customer_id`, `alias`, `normalized_alias`, `confidence` | Unique `(customer_id, normalized_alias)`; tên con người xác nhận có confidence 1.0, tên trích tự động dưới 1.0 và chỉ hỗ trợ retrieval cho đến khi xác nhận. |
 | `payer_entities` | `id`, `customer_id`, `payer_name`, `payer_type`, `confidence`, `seen_count`, `last_seen`, `last_period` | Unique `(customer_id, payer_name)`; cùng thẻ/tài khoản có thể thuộc nhiều khách hàng, khi đó không được xem là định danh duy nhất. |
-| `transaction_patterns` | `id`, `customer_id`, `payer_id`, `fingerprint`, `raw_example`, `normalized_text`, `template_text`, `structure`, `segments`, `embedding`, nguồn, confidence | Unique `(customer_id, fingerprint)`; **một khách hàng có nhiều mẫu**. `payer_id` nullable chỉ liên kết kênh đại diện. |
+| `payment_templates` | `id`, `fingerprint`, `template_text`, `structure`, `display_name`, `description`, `payment_mode`, `provider_kind`, `provider_name`, `created_at` | Bố cục dùng chung, unique fingerprint; một mẫu có nhiều khách hàng, không chứa bộ giá trị số riêng. Loại mặc định do admin xác nhận; liên kết mới thiếu nhãn riêng dùng loại này. |
+| `transaction_patterns` | `id`, `customer_id`, `template_id`, `payment_mode`, `provider_kind`, `provider_name`, `payer_id`, fingerprint, ví dụ, cấu trúc/số, vector, nguồn/thống kê | Liên kết khách hàng với mẫu chung; unique `(customer_id, fingerprint)` giữ các bộ định danh riêng. `payer_id` nullable liên kết kênh đại diện. |
 | `numeric_slots` | `id`, `pattern_id`, `slot_index`, `slot_confidence`, `seen_count`, `last_period` | Unique `(pattern_id, slot_index)`; thống kê độ ổn định vị trí số. |
 | `numeric_features` | `id`, `pattern_id`, `slot_index`, `numeric_value TEXT`, `value_digest VARCHAR(64)`, `numeric_type`, `exact_value_confidence`, `seen_count`, `missing_count`, `last_period`, `last_seen` | Unique `(pattern_id, slot_index, value_digest)`; nhiều giá trị theo slot; giữ nguyên văn, không giới hạn 100 ký tự. |
 | `retrieval_postings` | `id`, `token TEXT`, `token_digest VARCHAR(64)`, `pattern_id`, `weight` | Unique `(token_digest, pattern_id)`; inverted index nối khóa truy xuất với mẫu. |
@@ -40,6 +42,8 @@ erDiagram
 | `knowledge_metadata` | `key VARCHAR(100)`, `value TEXT` | PK `key`; phiên bản encoder/extractor, file import SHA-256 và trạng thái/kỳ/thống kê học. |
 
 Các FK không tự `ON DELETE CASCADE`. API xóa liên kết theo thứ tự trong một transaction; không nên xóa riêng một hàng cha bằng SQL.
+
+Schema hiện có 11 bảng. Việc tách mẫu dùng chung cần database mới tạo từ `sql/create_current.sql`, hoặc migration `003_shared_templates.sql` đối với kho knowledge-only cũ. NER học alias và xuất theo sheet không cần thêm bảng riêng. Tên tự động gắn với IDKH đã xác nhận, không tự đổi tên chuẩn. Xem [mẫu chung, proxy/self và SQL](shared-payment-templates.md).
 
 ## Một mẫu được lưu thế nào?
 
@@ -55,7 +59,7 @@ Ví dụ đã xác nhận: `TT KH:001234 HD:700012 TIEN NUOC`.
 - `source_file`, `source_row`, `example_date`: nguồn ví dụ để hiển thị khi đối chiếu lịch sử.
 - `confidence`, `seen_count`, `last_seen`, `last_period`: bằng chứng tái xuất hiện, không phải xác suất đã hiệu chuẩn.
 
-Hai slot có hai hàng `numeric_slots`, và giá trị tương ứng trong `numeric_features`. Mẫu có các posting như `id:`, `n:`, `contract:`, `name:`, `payer:`, `code:`, `detail:`, từ nội dung và bucket vector tùy dữ liệu.
+Hai slot có hai hàng `numeric_slots`, và giá trị tương ứng trong `numeric_features`. Mẫu có các posting như `template:<hash>`, `id:`, `n:`, `contract:`, `name:`, `payer:`, `code:`, `detail:`, từ nội dung và bucket vector tùy dữ liệu.
 
 Không lưu riêng mọi hóa đơn: số hóa đơn là feature biến đổi khi trích xuất được; mẫu lưu một ví dụ đại diện và các giá trị theo slot đã học.
 
@@ -69,7 +73,7 @@ Default ORM như digest/count/confidence được Python cấp khi ghi. DDL khô
 
 ## Quyền quản lý trên web
 
-Xem/tìm kiếm/phân trang/chi tiết **mọi bảng ứng dụng**. Khách hàng được thêm/sửa tên/xóa; mẫu được thêm biến thể/sửa/xóa. Các bảng kỹ thuật chỉ đọc để không sửa riêng vector/token/confidence làm knowledge mất nhất quán.
+Xem/tìm kiếm/phân trang/chi tiết **mọi bảng ứng dụng**. Khách hàng được thêm/sửa tên/xóa; liên kết mẫu được thêm biến thể/sửa/xóa. Mẫu chung được đặt tên/ghi chú/gán thu hộ hoặc tự trả; từng liên kết có thể giữ loại riêng. Các bảng kỹ thuật chỉ đọc để không sửa riêng vector/token/confidence làm knowledge mất nhất quán.
 
 - Thêm biến thể: giữ mẫu cũ và học mẫu mới cho cùng khách hàng.
 - Sửa mẫu: phân tích lại số, tính embedding, xây postings; thay mẫu sai hoặc gộp vào mẫu tương thích đã có.

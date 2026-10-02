@@ -1,5 +1,5 @@
 -- Standalone current schema: run this file alone for a new database.
--- No init.sql or migration 001/002 is required before or after this file.
+-- No init.sql or migration script is required before or after this file for a new database.
 -- Run inside a dedicated database as its owner / extension-capable administrator.
 -- From your Linux user shell: sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/create_current.sql
 -- Windows PowerShell: psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "sql/create_current.sql"
@@ -18,6 +18,23 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 
 CREATE INDEX IF NOT EXISTS ix_customers_normalized_name ON customers (normalized_name);
+
+CREATE TABLE IF NOT EXISTS payment_templates (
+	id SERIAL NOT NULL, 
+	fingerprint VARCHAR(64) NOT NULL, 
+	template_text TEXT NOT NULL, 
+	structure TEXT NOT NULL, 
+	display_name TEXT NOT NULL, 
+	description TEXT NOT NULL, 
+	payment_mode VARCHAR(16) NOT NULL, 
+	provider_kind VARCHAR(16) NOT NULL, 
+	provider_name TEXT NOT NULL, 
+	created_at VARCHAR(40) NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_templates_payment_mode CHECK (payment_mode IN ('unknown', 'proxy', 'self')), 
+	CONSTRAINT ck_templates_provider_kind CHECK (provider_kind IN ('unknown', 'bank', 'wallet', 'other')), 
+	UNIQUE (fingerprint)
+);
 
 CREATE TABLE IF NOT EXISTS knowledge_metadata (
 	key VARCHAR(100) NOT NULL, 
@@ -54,9 +71,9 @@ CREATE TABLE IF NOT EXISTS payer_entities (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_payer_entities_customer_id ON payer_entities (customer_id);
-
 CREATE INDEX IF NOT EXISTS ix_payer_entities_payer_name ON payer_entities (payer_name);
+
+CREATE INDEX IF NOT EXISTS ix_payer_entities_customer_id ON payer_entities (customer_id);
 
 CREATE TABLE IF NOT EXISTS knowledge_receipts (
 	id SERIAL NOT NULL, 
@@ -71,6 +88,10 @@ CREATE TABLE IF NOT EXISTS knowledge_receipts (
 CREATE TABLE IF NOT EXISTS transaction_patterns (
 	id SERIAL NOT NULL, 
 	customer_id VARCHAR(100) NOT NULL, 
+	template_id INTEGER NOT NULL, 
+	payment_mode VARCHAR(16) NOT NULL, 
+	provider_kind VARCHAR(16) NOT NULL, 
+	provider_name TEXT NOT NULL, 
 	payer_id INTEGER, 
 	fingerprint VARCHAR(64) NOT NULL, 
 	normalized_text TEXT NOT NULL, 
@@ -89,11 +110,18 @@ CREATE TABLE IF NOT EXISTS transaction_patterns (
 	last_period VARCHAR(7) NOT NULL, 
 	PRIMARY KEY (id), 
 	UNIQUE (customer_id, fingerprint), 
+	CONSTRAINT ck_patterns_payment_mode CHECK (payment_mode IN ('unknown', 'proxy', 'self')), 
+	CONSTRAINT ck_patterns_provider_kind CHECK (provider_kind IN ('unknown', 'bank', 'wallet', 'other')), 
 	FOREIGN KEY(customer_id) REFERENCES customers (id), 
+	FOREIGN KEY(template_id) REFERENCES payment_templates (id), 
 	FOREIGN KEY(payer_id) REFERENCES payer_entities (id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_transaction_patterns_customer_id ON transaction_patterns (customer_id);
+
+CREATE INDEX IF NOT EXISTS ix_patterns_template_customer ON transaction_patterns (template_id, customer_id);
+
+CREATE INDEX IF NOT EXISTS ix_transaction_patterns_template_id ON transaction_patterns (template_id);
 
 CREATE TABLE IF NOT EXISTS numeric_slots (
 	id SERIAL NOT NULL, 
@@ -126,9 +154,9 @@ CREATE TABLE IF NOT EXISTS numeric_features (
 	FOREIGN KEY(pattern_id) REFERENCES transaction_patterns (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_numeric_features_value_digest ON numeric_features (value_digest);
-
 CREATE INDEX IF NOT EXISTS ix_numeric_features_pattern_id ON numeric_features (pattern_id);
+
+CREATE INDEX IF NOT EXISTS ix_numeric_features_value_digest ON numeric_features (value_digest);
 
 CREATE TABLE IF NOT EXISTS retrieval_postings (
 	id SERIAL NOT NULL, 

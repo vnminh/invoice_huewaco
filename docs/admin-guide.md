@@ -6,7 +6,7 @@ Trang quản trị phục vụ hai việc: đối soát tệp ngân hàng và qu
 
 | Khu vực | Dùng để làm gì |
 | --- | --- |
-| Đối soát giao dịch | Tải Excel ngân hàng chưa lọc, xem kết quả theo từng tệp, tìm giao dịch, duyệt và tải CSV. |
+| Đối soát giao dịch | Tải Excel ngân hàng chưa lọc, xem kết quả theo từng tệp, tìm giao dịch, duyệt và tải Excel hoặc CSV theo sheet. |
 | Học dữ liệu mới | Nhập Excel đã xác nhận hoặc CSV đã học; thêm khách hàng hoặc một mẫu mới. |
 | Quản lý kiến thức | Tìm khách hàng, xem tất cả mẫu của khách hàng, sửa/xóa hồ sơ hoặc mẫu; xem các bảng kiến thức hỗ trợ. |
 | Tác vụ xử lý | Theo dõi nhập/đối soát, dừng tác vụ, mở kết quả, tải CSV và xóa tệp làm việc. |
@@ -52,7 +52,7 @@ Nếu có nhiều kỳ rõ ràng, hệ thống liệt kê các kỳ và bỏ tr�
 
 CSV kết quả thêm cột `payment_period`; cột `date` vẫn là ngày giờ chuyển khoản. Có thể tìm trong bảng bằng kỳ chuẩn hóa, ví dụ `07/2026`. Kết quả làm việc cũ được bổ sung kỳ khi đọc lại từ nội dung, không cần đối soát lại hoặc chạy SQL.
 
-**Chỉ luồng đối soát có thông tin này.** Luồng học tiếp tục bỏ ngày/tháng theo bộ chuẩn hóa hiện tại; không đưa kỳ vào embedding, fingerprint, numeric slots hoặc điểm so khớp. CSV đã học giữ nguyên các cột và logic. Kỳ được lưu trong tệp kết quả làm việc, không thêm cột/bảng PostgreSQL.
+**Chỉ luồng đối soát có thông tin này.** Luồng học tiếp tục bỏ ngày/tháng theo bộ chuẩn hóa hiện tại; không đưa kỳ vào embedding, fingerprint, numeric slots hoặc điểm so khớp. CSV học không chứa kỳ hóa đơn; các cột loại thanh toán là thông tin độc lập với kỳ. Kỳ được lưu trong tệp kết quả làm việc, không thêm cột/bảng PostgreSQL.
 
 ### Tên trong nội dung chuyển tiền
 
@@ -68,11 +68,13 @@ Bố cục này có trường kỳ **08/2026** và trường tên **Tran Thi Ngo
 
 Nguồn tên được phân biệt giữa **trường tên trong nội dung ngân hàng** và **tên nhận diện tự động**. Bố cục MB hợp lệ có thể cung cấp tên đầy đủ ngay cả khi nhận diện tự động chưa sẵn sàng hoặc chỉ nhận được một phần tên. Hệ thống giữ cách viết gốc, không tự thêm dấu tiếng Việt. Với nhiều tên, cần kiểm tra người nào thuộc giao dịch.
 
-Trong màn hình kiểm tra, có thể bấm **Dùng tên trong nội dung**, rồi kiểm tra mã khách hàng và tên trước khi **Xác nhận & học**. Bấm nút dùng tên hoặc sửa ô chưa làm phát sinh kiến thức. Không tự đăng ký tên NER vào kho; chỉ tên/bí danh người dùng xác nhận mới được học.
+Trong màn hình kiểm tra, có thể bấm **Dùng tên trong nội dung**, rồi kiểm tra mã khách hàng và tên trước khi **Xác nhận & học**. Bấm nút dùng tên hoặc sửa ô chưa làm phát sinh kiến thức. Khi học giao dịch đã xác nhận, một tên trích rõ ràng có thể được bổ sung làm bí danh cho đúng mã khách hàng. Bí danh tự động có mức tin cậy thấp hơn tên người dùng kiểm tra, hỗ trợ tìm kiếm nhưng chưa dùng làm bằng chứng tên để tự ghép; nhiều tên không tự gộp vào một hồ sơ. Tên chuẩn của khách hàng không tự bị đổi.
 
-CSV kết quả có thêm `extracted_name` (một tên được chọn, để trống nếu có nhiều lựa chọn), `extracted_names` (các tên, cách nhau bằng `;`) và `name_extraction_status`. Chi tiết nguồn/vị trí tên nằm trong tệp kết quả làm việc. CSV đã học giữ nguyên định dạng. Với tệp kết quả cũ, hệ thống có thể đọc bổ sung trường tên theo bố cục MB khi mở lại; không chạy lại NER hay thay đổi đề xuất cũ. Muốn nhận diện NER cho các nội dung cũ cần đối soát một tệp mới.
+CSV kết quả có thêm `extracted_name` (một tên được chọn, để trống nếu có nhiều lựa chọn), `extracted_names` (các tên, cách nhau bằng `;`) và `name_extraction_status`. Chi tiết nguồn/vị trí tên nằm trong tệp kết quả làm việc. CSV đã học vẫn nhập được theo bố cục cũ; ba cột loại thanh toán mới là tùy chọn. Với tệp kết quả cũ, hệ thống có thể đọc bổ sung trường tên theo bố cục MB khi mở lại; không chạy lại NER hay thay đổi đề xuất cũ. Muốn nhận diện NER cho các nội dung cũ cần đối soát một tệp mới.
 
 ### Nhiều sheet và các bố cục ngân hàng
+
+Khi sheet giao dịch chưa nhận diện được, tác vụ hiển thị cột thiếu hoặc trùng vai trò và nút tải mẫu chuẩn đúng luồng. Vẫn nhận diện tổng quát theo tiêu đề; không bắt buộc đổi mọi tệp về cùng bố cục. Xem [quy ước cột, tệp mẫu và cách xuất theo sheet](excel-layout-and-export.md).
 
 Mỗi sheet được nhận diện theo tiêu đề cột: ngày, nội dung/mô tả/diễn giải, số tiền ghi có/ghi nợ hoặc số tiền có dấu, tham chiếu. Không áp dụng cột cố định của BIDV cho ngân hàng khác. Hàng tiêu đề được tìm trong 100 dòng đầu.
 
@@ -141,6 +143,18 @@ Trong **Quản lý kiến thức**:
 
 Sửa tên khách hàng cập nhật cả tên chuẩn hóa và thông tin tìm kiếm liên quan. Mã khách hàng không được thay đổi bằng thao tác sửa tên.
 
+### Đánh dấu mẫu thu hộ bằng tay
+
+1. Vào **Quản lý kiến thức → Mẫu dùng chung**. Có thể tìm theo nội dung mẫu hoặc tên quản lý; danh sách hiển thị kiểu thanh toán hiện tại.
+2. Mở **Chi tiết**. Trong phần **Đánh dấu thu hộ / tự trả cho mẫu**, chọn **Thu hộ qua ngân hàng / ví**.
+3. Chọn loại đơn vị (**Ngân hàng**, **Ví điện tử**, **Dịch vụ khác**) và nhập tên đơn vị nếu đã biết.
+4. Kiểm tra số liên kết bị ảnh hưởng, đánh dấu xác nhận phạm vi rồi bấm **Lưu loại của mẫu & áp dụng**.
+5. Loại được lưu trên mẫu chung và toàn bộ liên kết hiện có. Khi học liên kết mới cùng mẫu mà không cung cấp nhãn riêng, dùng loại mặc định này. Thao tác không đổi mã/số riêng hoặc tăng số lần học.
+
+Có thể chọn **Khách hàng tự trả** hoặc **Chưa xác định** để sửa lại. Với ngoại lệ, bấm **Xem khách hàng dùng mẫu**, mở một liên kết rồi **Lưu kiểu thanh toán**: chỉ liên kết đó đổi. Gán lại loại toàn mẫu sẽ thay cả ngoại lệ hiện có; cần kiểm tra phạm vi trước khi lưu.
+
+Khi duyệt giao dịch, cũng có thể chọn kiểu và đơn vị trước **Xác nhận & học**. Lựa chọn **Theo mẫu đã xác nhận (nếu có)** dùng nhãn đã lưu, không tự đoán từ tên ngân hàng. Không có căn cứ thì giữ Chưa xác định; không tự coi là tự trả. Xem [cơ chế phân biệt, số riêng và schema](shared-payment-templates.md).
+
 ## 5. Học từ tệp đã xác nhận
 
 ### Excel
@@ -149,13 +163,15 @@ Chọn tệp đã lọc/đã xác nhận ở **Học dữ liệu mới**, đánh
 
 Nhập được lưu theo từng đợt. Dừng nhập sẽ giữ những đợt đã hoàn tất và hủy đợt đang xử lý. Tải lại cùng tệp sẽ đọc lại tệp, bỏ qua những dòng đã học; không cần xóa kiến thức để tiếp tục.
 
+Học xử lý tối đa 32 dòng mỗi đợt, chuẩn bị nhận diện tên trước khi ghi database. Một tên trích rõ ràng được thêm làm bí danh tự động, không thay tên chuẩn hoặc tự suy IDKH. Khi bổ sung tính năng NER hoặc đổi cấu hình NER, có thể nhập lại tệp cũ để bổ sung bí danh; mẫu/số đã học không tăng thêm số lần gặp. Mã khách hàng ghi rõ khác nhãn hoặc hợp đồng đã thuộc hồ sơ khác sẽ bị chặn học và báo lỗi riêng dòng.
+
 Mỗi dòng học có savepoint riêng. Nếu một dòng có dữ liệu không hợp lệ hoặc lỗi ràng buộc khi ghi PostgreSQL, các thay đổi của riêng dòng đó được rollback và báo vào danh sách lỗi; những dòng hợp lệ vẫn được commit theo đợt. Trạng thái **Hoàn tất · có dòng lỗi** có nghĩa tác vụ đã đọc xong, nhưng cần kiểm tra báo cáo trước khi xem tệp đã được học đầy đủ. Tệp từng có lỗi được phép nhập lại để thử các dòng lỗi; receipt ngăn học lại các dòng thành công. Sửa dữ liệu trong tệp nguồn rồi tải lại khi cần.
 
 CSV học cũng bỏ qua từng dòng có lỗi dữ liệu/mã hóa nội dung và báo số dòng vật lý trong CSV (có tính hàng tiêu đề). Lỗi cấu trúc CSV hoặc mã hóa của cả tệp có thể khiến việc đọc tiếp không an toàn và vẫn dừng tác vụ.
 
 ### CSV đã học
 
-**CSV đã học** chỉ chứa dòng đã xác nhận thành công; không chứa các đề xuất chưa duyệt. Có thể nhập lại CSV này ở mục học dữ liệu, hoặc chuyển sang một kho kiến thức khác.
+**CSV đã học (ZIP)** chỉ chứa dòng đã xác nhận thành công; không chứa các đề xuất chưa duyệt. Mỗi sheet có một CSV riêng trong ZIP. Giải nén rồi nhập từng CSV ở mục học dữ liệu, hoặc chuyển sang một kho kiến thức khác.
 
 | Cột | Nội dung |
 | --- | --- |
@@ -168,10 +184,13 @@ CSV học cũng bỏ qua từng dòng có lỗi dữ liệu/mã hóa nội dung 
 | NOIDUNG_GOC_B64 | Bản mã hóa nội dung gốc để bảo toàn nội dung khi xuất CSV. Không cần tự tạo. |
 | SHEET | Tên sheet nguồn; tùy chọn, được giữ khi xuất CSV đã học. |
 | REFERENCE | Tham chiếu giao dịch nguồn; tùy chọn. |
+| KIEUTHANHTOAN | `proxy` = thu hộ, `self` = tự trả, `unknown` = chưa xác định. Tùy chọn; để trống dùng loại mẫu đã xác nhận nếu có. |
+| LOAIDONVITHUHO | `bank`, `wallet`, `other` hoặc `unknown`; tùy chọn. |
+| DONVITHUHO | Tên đơn vị thu hộ; tùy chọn, không phải tên hay mã khách hàng. |
 
 Tệp dùng UTF-8; CSV tải từ hệ thống có BOM để Excel đọc tiếng Việt. Khi chỉnh CSV trong Excel, định dạng cột IDKH là **Text** để không mất số 0 đầu. Nếu sửa NOIDUNG, hệ thống dùng nội dung hiển thị mới; bản mã hóa chỉ dùng để khôi phục chính xác nội dung xuất chưa bị sửa.
 
-CSV không có worksheet; hệ thống đọc mọi dòng của mọi ngân hàng/kênh trong CSV, không lọc riêng BIDV. CSV kết quả và CSV đã học của một tác vụ bao gồm các sheet đã xử lý trong tệp đó.
+CSV không có worksheet; hệ thống đọc mọi dòng/ngân hàng/kênh trong CSV nhập, không lọc riêng BIDV. Tệp tải từ đối soát đóng ZIP với một CSV cho mỗi sheet nguồn. **Tải Excel** giữ các sheet trong một workbook kết quả với tiêu đề tiếng Việt. Các tệp xuất chứa toàn bộ kết quả đã lưu của tệp đang xem, không giới hạn theo bộ lọc/phân trang trên màn hình.
 
 Nhập lại CSV có cùng nội dung/khách hàng/ngày/số tiền/kênh đã xác nhận không tăng thêm lần học. Khi nhập sang kho khác, các dòng được học vào kho đó.
 
@@ -183,4 +202,4 @@ Sửa/xóa kiến thức bị chặn khi còn tác vụ đang chạy hoặc xác
 
 Xóa khách hàng xóa hồ sơ cùng các mẫu, số và liên kết trả tiền của khách hàng. Xóa mẫu chỉ xóa mẫu đó và dữ liệu tìm kiếm liên quan. Những kết quả/CSV đã tạo vẫn là bản ghi của lần xử lý trước; chúng không được tính lại ngầm khi sửa kiến thức.
 
-Các bảng phụ trợ chỉ xem. Dùng thao tác thêm/sửa/xóa hồ sơ và mẫu để hệ thống cập nhật các phần liên quan đồng bộ; không cần mở công cụ database.
+Mẫu chung có thể đặt tên/ghi chú, cập nhật kiểu thanh toán và xóa khi không còn liên kết. Các bảng phụ trợ chỉ xem. Dùng thao tác thêm/sửa/xóa hồ sơ và mẫu để hệ thống cập nhật các phần liên quan đồng bộ; không cần mở công cụ database.
