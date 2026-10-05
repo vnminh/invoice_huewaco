@@ -9,8 +9,55 @@ from sqlalchemy.exc import DataError, IntegrityError
 
 from .db import Customer, KnowledgeReceipt, Metadata, Pattern, sessions
 from .excel import ConfirmedCsv, StreamingWorkbook, LAYOUT_VERSION, layout_guidance
-from .core import learning_receipt
+from .core import id_key, learning_receipt
+from . import id_slots
+from .id_slots import BATCH_MIN_CUSTOMERS
+from .normalize import fold
+from .payment_templates import collection_channel, unique_transfer_reference
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
+
+
+def learning_units(batches, core, size=32):
+    """Yield (rows, split): split > 0 marks a provider batch-settlement run of ``split`` customers.
+
+    Confirmed files list a wallet/collection settlement as consecutive rows sharing one
+    narrative, one row per customer, with the collection channel in the bank/channel column.
+    Such runs are learned compactly (registry, receipt and layout statistics only); every
+    other row keeps full per-customer pattern learning.
+    """
+    pending, run, run_key = [], [], None
+
+    def close(run):
+        customers = {id_key(row.customer_id) for row in run}
+        # Only collection services (MoMo, Payoo, VNPAY...) are stored compactly. An organisation
+        # paying many meters at once keeps full per-customer learning for later allocation.
+        if (len(customers) >= BATCH_MIN_CUSTOMERS and collection_channel(run[0].payer)
+                and unique_transfer_reference(core.normalize(run[0].raw))):
+            return [(run[start:start + size], len(customers)) for start in range(0, len(run), size)], []
+        return [], run
+
+    for batch in batches:
+        for row in batch:
+            key = ' '.join(fold(row.raw).split()) if row.label_status == 'confirmed' and row.customer_id else None
+            if key is not None and key == run_key:
+                run.append(row)
+                continue
+            if run:
+                units, normal = close(run)
+                yield from units
+                pending.extend(normal)
+            run, run_key = ([row], key) if key is not None else ([], None)
+            if key is None:
+                pending.append(row)
+            while len(pending) >= size:
+                yield pending[:size], 0
+                pending = pending[size:]
+    if run:
+        units, normal = close(run)
+        yield from units
+        pending.extend(normal)
+    for start in range(0, len(pending), size):
+        yield pending[start:start + size], 0
 
 
 class ImportCancelled(Exception):
@@ -21,7 +68,7 @@ class ImportCancelled(Exception):
 
 
 def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=None, check_cancel=None,
-                     row_errors=None):
+                     row_errors=None, only_sheets=None):
     factory = sessions(engine)
     counts = Counter()
     payers = Counter()
@@ -62,7 +109,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
         is_csv = Path(path).suffix.lower() == '.csv'
         reader = ConfirmedCsv if is_csv else StreamingWorkbook
         with reader(path, check_cancel=check_cancel, row_errors=row_errors) as workbook:
-            sheets = workbook.confirmed_sheets()
+            sheets = [sheet for sheet in workbook.confirmed_sheets() if not only_sheets or sheet in only_sheets]
             skipped_sheets = [] if is_csv else workbook.skipped_sheets('confirmed')
             if progress:
                 progress({'processed': 0, 'sheets': sheets, 'skipped_sheets': skipped_sheets,
@@ -70,12 +117,13 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             if not sheets:
                 raise ValueError(layout_guidance('confirmed'))
             for sheet in sheets:
-                for batch in workbook.batches(sheet=sheet, batch_size=min(batch_size, 32)):
+                for batch, split in learning_units(workbook.batches(sheet=sheet, batch_size=min(batch_size, 32)), core):
                     check_cancel()
-                    failed = prepare_rows(core, [row for row in batch if row.label_status == 'confirmed'],
-                                          row_errors, check_cancel, embedding_chunk)
-                    names_to_prepare = [row.raw for row in batch if row.label_status == 'confirmed' and id(row) not in failed]
-                    core.prepare_names(names_to_prepare, check_cancel)
+                    failed = set() if split else prepare_rows(core, [row for row in batch if row.label_status == 'confirmed'],
+                                                              row_errors, check_cancel, embedding_chunk)
+                    if not split:
+                        core.prepare_names([row.raw for row in batch if row.label_status == 'confirmed' and id(row) not in failed],
+                                           check_cancel)
                     batch_counts, batch_payers, batch_periods = Counter(), Counter(), set()
                     with factory.begin() as session:
                         if engine.dialect.name == 'postgresql':
@@ -98,8 +146,17 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                                         raise ValueError('Dòng học thiếu mã khách hàng đã xác nhận.')
                                     customer_id = core.ensure_customer(session, row.customer_id, row.customer_name).id if is_csv else row.customer_id
                                     receipt = learning_receipt(row.raw, customer_id, row.date, row.amount, row.payer) if is_csv else None
-                                    learned = core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt)
-                                    if core.extract_names(row.raw)['name_extraction']['status'] == 'unavailable':
+                                    if split:
+                                        learned = core.learn_settlement(session, row, customer_id, row.customer_name, split,
+                                                                        receipt_key=receipt)
+                                        batch_counts['batch_settlement_rows'] += 1
+                                    else:
+                                        learned = core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt)
+                                    # Trusted label, but report when the payer wrote other IDs (audit only).
+                                    written = {id_key(value) for value in core.normalize(row.raw).customer_ids}
+                                    if written and id_key(customer_id) not in written:
+                                        batch_counts['label_not_in_text_ids'] += 1
+                                    if not split and core.extract_names(row.raw)['name_extraction']['status'] == 'unavailable':
                                         batch_counts['name_extraction_unavailable'] += 1
                                     # Surface all pending inserts while this row's savepoint is active.
                                     session.flush()
@@ -119,6 +176,13 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                         progress({**dict(counts), 'sheet_counts': dict(sheet_counts), 'skipped_sheets': skipped_sheets,
                                   **row_errors.summary()})
         check_cancel()
+        if progress:
+            progress({**dict(counts), 'phase': 'learning_id_slots'})
+        with factory.begin() as session:
+            if engine.dialect.name == 'postgresql':
+                session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+            # Customer-ID positions are recounted from all confirmed links after each import.
+            summary['id_slots'] = id_slots.rebuild(session, check_cancel=check_cancel)
     except ImportCancelled:
         summary.update(status='cancelled', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
                        periods=sorted(periods), payers=dict(payers),

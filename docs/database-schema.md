@@ -25,14 +25,15 @@ erDiagram
 
 `knowledge_metadata` là bảng key/value độc lập, không có FK.
 
-## Danh mục 11 bảng
+## Danh mục 12 bảng
 
 | Bảng | Trường chính | Ràng buộc / ý nghĩa |
 | --- | --- | --- |
 | `customers` | `id VARCHAR(100)`, `canonical_name TEXT`, `normalized_name TEXT` | PK là mã dạng chuỗi; tên chuẩn hiển thị, tên bỏ dấu dùng tìm kiếm. |
 | `customer_aliases` | `id`, `customer_id`, `alias`, `normalized_alias`, `confidence` | Unique `(customer_id, normalized_alias)`; tên con người xác nhận có confidence 1.0, tên trích tự động dưới 1.0 và chỉ hỗ trợ retrieval cho đến khi xác nhận. |
 | `payer_entities` | `id`, `customer_id`, `payer_name`, `payer_type`, `confidence`, `seen_count`, `last_seen`, `last_period` | Unique `(customer_id, payer_name)`; cùng thẻ/tài khoản có thể thuộc nhiều khách hàng, khi đó không được xem là định danh duy nhất. |
-| `payment_templates` | `id`, `fingerprint`, `template_text`, `structure`, `display_name`, `description`, `payment_mode`, `provider_kind`, `provider_name`, `created_at` | Bố cục dùng chung, unique fingerprint; một mẫu có nhiều khách hàng, không chứa bộ giá trị số riêng. Loại mặc định do admin xác nhận; liên kết mới thiếu nhãn riêng dùng loại này. |
+| `payment_templates` | `id`, `fingerprint`, `template_text`, `structure`, `display_name`, `description`, `payment_mode`, `provider_kind`, `provider_name`, `created_at`, `max_transfer_customers`, `settlement_rows` | Bố cục dùng chung, unique fingerprint; một mẫu có nhiều khách hàng, không chứa bộ giá trị số riêng. Loại mặc định do admin xác nhận (hoặc lấy từ kênh thu hộ trong tệp FN); liên kết mới thiếu nhãn riêng dùng loại này. `max_transfer_customers`: số khách hàng lớn nhất trong một lần chuyển; `settlement_rows`: dòng thu hộ tổng hợp học gọn. |
+| `customer_id_slots` | `id`, `context` (unique), `hits`, `total`, `example`, `updated_at` | Ngữ cảnh vị trí số học từ dữ liệu xác nhận; dựng lại sau mỗi lần nhập. |
 | `transaction_patterns` | `id`, `customer_id`, `template_id`, `payment_mode`, `provider_kind`, `provider_name`, `payer_id`, fingerprint, ví dụ, cấu trúc/số, vector, nguồn/thống kê | Liên kết khách hàng với mẫu chung; unique `(customer_id, fingerprint)` giữ các bộ định danh riêng. `payer_id` nullable liên kết kênh đại diện. |
 | `numeric_slots` | `id`, `pattern_id`, `slot_index`, `slot_confidence`, `seen_count`, `last_period` | Unique `(pattern_id, slot_index)`; thống kê độ ổn định vị trí số. |
 | `numeric_features` | `id`, `pattern_id`, `slot_index`, `numeric_value TEXT`, `value_digest VARCHAR(64)`, `numeric_type`, `exact_value_confidence`, `seen_count`, `missing_count`, `last_period`, `last_seen` | Unique `(pattern_id, slot_index, value_digest)`; nhiều giá trị theo slot; giữ nguyên văn, không giới hạn 100 ký tự. |
@@ -43,7 +44,7 @@ erDiagram
 
 Các FK không tự `ON DELETE CASCADE`. API xóa liên kết theo thứ tự trong một transaction; không nên xóa riêng một hàng cha bằng SQL.
 
-Schema hiện có 11 bảng. Việc tách mẫu dùng chung cần database mới tạo từ `sql/create_current.sql`, hoặc migration `003_shared_templates.sql` đối với kho knowledge-only cũ. NER học alias và xuất theo sheet không cần thêm bảng riêng. Tên tự động gắn với IDKH đã xác nhận, không tự đổi tên chuẩn. Xem [mẫu chung, proxy/self và SQL](shared-payment-templates.md).
+Schema hiện có 12 bảng; kho phiên bản 003 bổ sung bằng `sql/migrations/004_learned_id_slots.sql`. Việc tách mẫu dùng chung cần database mới tạo từ `sql/create_current.sql`, hoặc migration `003_shared_templates.sql` đối với kho knowledge-only cũ. NER học alias và xuất theo sheet không cần thêm bảng riêng. Tên tự động gắn với IDKH đã xác nhận, không tự đổi tên chuẩn. Xem [mẫu chung, proxy/self và SQL](shared-payment-templates.md).
 
 ## Một mẫu được lưu thế nào?
 

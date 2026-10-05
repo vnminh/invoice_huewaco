@@ -32,7 +32,7 @@ Virtualenv phải được tạo lại trên từng hệ điều hành; không c
 
 Sửa DATABASE_URL trong .env. Quản trị viên tự tạo database/login và chạy SQL; backend không tự khởi tạo hoặc migrate PostgreSQL.
 
-**Database mới**: chỉ chạy [sql/create_current.sql](sql/create_current.sql) để tạo thẳng 11 bảng của schema hiện tại, không cần init hoặc migration. **Kho knowledge-only đang có dữ liệu (đã ở phiên bản 002)**: tự chạy [003_shared_templates.sql](sql/migrations/003_shared_templates.sql) để bổ sung mẫu chung và loại thanh toán, giữ các liên kết/số/vector cũ. Với phiên bản cũ hơn, xem [hướng dẫn chuyển phiên bản](docs/migration-and-storage.md) trước khi nâng cấp. Backend không chạy SQL thay bạn.
+**Database mới**: chỉ chạy [sql/create_current.sql](sql/create_current.sql) để tạo thẳng 12 bảng của schema hiện tại, không cần init hoặc migration. **Database đã có schema 003 nhưng chưa có dữ liệu**: tự chạy [004_learned_id_slots.sql](sql/migrations/004_learned_id_slots.sql). **Kho đã có dữ liệu học bằng phiên bản trước**: bộ trích đặc trưng đã đổi (`rules-v6-learned-id-slots`), cần database mới từ `create_current.sql` rồi nhập lại các tệp FN; ứng dụng từ chối trộn hai phiên bản. Với phiên bản cũ hơn, xem [hướng dẫn chuyển phiên bản](docs/migration-and-storage.md) trước khi nâng cấp. Backend không chạy SQL thay bạn.
 
 Ứng dụng và script CLI tự đọc `.env` ở gốc project bằng UTF-8 (có thể có BOM). Biến môi trường đã đặt trong terminal/service được ưu tiên hơn `.env`; không cần `source .env` hay tự gán từng biến trong PowerShell.
 
@@ -66,7 +66,7 @@ Tài liệu chi tiết:
 - [Bố cục Excel và xuất theo sheet](docs/excel-layout-and-export.md): xem hai bố cục ngay trên UI, nhận diện tổng quát, Excel kết quả và ZIP CSV theo sheet.
 - [Tìm kiếm, so khớp và học](docs/matching-and-learning.md): số theo thứ tự, retrieval, feature/trọng số, guard precision, chống trùng và phục hồi.
 - [Mẫu chung và thu hộ/tự trả](docs/shared-payment-templates.md): quan hệ nhiều khách hàng, số riêng theo liên kết, gán loại thủ công trên web và SQL mới.
-- [Schema database](docs/database-schema.md): 11 bảng, quan hệ, trường, chỉ mục, cách lưu mẫu/hóa đơn/số và quyền quản lý.
+- [Schema database](docs/database-schema.md): 12 bảng, quan hệ, trường, chỉ mục, cách lưu mẫu/hóa đơn/số và quyền quản lý.
 - [Cài đặt, chuyển phiên bản và lưu trữ](docs/migration-and-storage.md): SQL tự chạy, CSV sao lưu cũ, working, restart và dọn kết quả.
 - [Chạy trên Linux và Windows](docs/platform-setup.md): lệnh PowerShell, đường dẫn/cache, SQL và khác biệt thao tác file/đo RAM.
 
@@ -86,7 +86,7 @@ Giới hạn upload 100 MB, XLSX giải nén tối đa 2 GB; đọc streaming, c
 
 Học nhận diện các cột IDKH/MaKH/Mã KH/Mã khách hàng theo từng sheet. Cột ID đơn lẻ chỉ được coi là mã khách hàng khi có cột tên khách hàng rõ ràng và nội dung giao dịch. Đối soát quét mọi sheet, nhận diện cột theo tiêu đề của từng bố cục; không cố định BIDV. CSV kết quả/đã học giữ sheet, ngân hàng/kênh và tham chiếu. Tác vụ hiển thị số dòng từng sheet và sheet chưa nhận diện được. Các dòng chưa rõ chiều ghi có/ghi nợ được đưa về kiểm tra thủ công 0%; xem chi tiết bố cục trong hướng dẫn quản trị.
 
-UI có link xem bố cục cho học và đối soát, chỉ mở ngay trên trang; không tải mẫu hay xuất dữ liệu đã học. Excel kết quả chia theo sheet đầu vào; CSV kết quả đóng ZIP, mỗi sheet một CSV. Xuất giữ mã dưới dạng chuỗi. Khi học, mã khách hàng ghi rõ trong nội dung khác nhãn bị chặn và báo lỗi riêng dòng; HD đã liên kết khách hàng khác vẫn được phép học cho IDKH đã xác nhận.
+UI có link xem bố cục cho học và đối soát, chỉ mở ngay trên trang; không tải mẫu hay xuất dữ liệu đã học. Excel kết quả chia theo sheet đầu vào; CSV kết quả đóng ZIP, mỗi sheet một CSV. Xuất giữ mã dưới dạng chuỗi. Khi học, nhãn IDKH trong tệp đã đối chiếu được tin cậy, kể cả khi nội dung ghi mã khác (được đếm ở `label_not_in_text_ids`). Hệ thống học vị trí mã khách hàng theo từng bố cục ngân hàng/kênh, học gọn các khoản thu hộ tổng hợp và đề xuất phân bổ khi một lần chuyển trả cho nhiều khách hàng; xem [mục 2b](docs/matching-and-learning.md#2b-học-từ-dữ-liệu-đã-xác-nhận-vị-trí-mã-thu-hộ-tổng-hợp-nhiều-khách-hàng).
 
 Kết quả đối soát có cột **Kỳ thanh toán**, lấy tháng/năm hóa đơn nước từ nội dung và tách khỏi ngày giờ chuyển khoản. Không đủ căn cứ thì hiển thị **Chưa xác định**. CSV kết quả thêm `payment_period`, `extracted_name`, `extracted_names`, `name_extraction_status`; kỳ vẫn không được đưa vào đặc trưng học hoặc PostgreSQL. CSV học thêm ba cột tùy chọn về thu hộ/tự trả, tương thích tệp cũ.
 
@@ -101,7 +101,17 @@ File theo tháng chỉ là fixture; không có nút học/thử file mẫu trên
 .venv/bin/python scripts/benchmark.py
 ```
 
-Trên Windows, thay `.venv/bin/python` bằng `.\.venv\Scripts\python.exe`. Các script cũng đọc `.env` tự động; chỉ chạy học/benchmark khi bạn chủ động muốn sử dụng kho thử nghiệm.
+Trên Windows, thay `.venv/bin/python` bằng `.\.venv\Scripts\python.exe`.
+
+Kiểm tra nhanh một ngân hàng (học FN tháng 7, đối soát tháng 8, chấm bằng FN tháng 8; kho SQLite riêng, không chạm PostgreSQL):
+
+```bash
+.venv/bin/python scripts/benchmark_all.py --train 'Data/Ngan hang thang 7-2026 FN.xlsx' \
+  --raw 'Data/Ngan hang thang 08.2026.xlsx' --truth 'Data/Ngan hang thang 8-2026 FN.xlsx' \
+  --out runtime/bench_bidv --sheets BIDV
+```
+
+Kết quả sheet BIDV (embedding hash, 05/10/2026), so với phiên bản trước: tự động đúng 948 / sai 1 (trước 944 / 3); khách hàng đã có trong tháng 7: 948 đúng, 0 sai; 0 dòng học bị từ chối (trước 73); mã đề xuất cho khách hàng chưa có mẫu đúng 5.873 / 5.876; kho nhỏ hơn 26%, học nhanh hơn ~2 lần. Dòng sai còn lại là một giao dịch nhiều khách hàng. Bỏ `--sheets` để chạy mọi sheet (lâu hơn nhiều). Các script cũng đọc `.env` tự động; chỉ chạy học/benchmark khi bạn chủ động muốn sử dụng kho thử nghiệm.
 
 Benchmark dùng BIDV trong Data/Ngan hang thang 08.2026.xlsx, nhãn từ Data/Ngan hang thang 8-2026 FN.xlsx; không học nhãn đánh giá. Route API phát triển được giữ nhưng không đưa lên UI.
 

@@ -12,14 +12,18 @@ RESULT_COLUMNS = ('row_index', 'date', 'raw', 'amount', 'predicted_customer_id',
     'matched_pattern_id', 'matched_pattern', 'matched_template', 'source_file', 'source_row',
     'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period',
     'extracted_name', 'extracted_names', 'name_extraction_status', 'shared_template_id',
-    'shared_template_customer_count', 'payment_mode', 'provider_kind', 'provider_name')
+    'shared_template_customer_count', 'payment_mode', 'provider_kind', 'provider_name',
+    'case_type', 'suggested_customer_ids')
 RESULT_LABELS = ('Dòng gốc', 'Thời gian chuyển khoản', 'Nội dung chuyển tiền', 'Số tiền ghi có',
     'Mã khách hàng đề xuất', 'Tên khách hàng đề xuất', 'Điểm so khớp', 'Đề xuất', 'Trạng thái duyệt',
     'Mã khách hàng xác nhận', 'Tên khách hàng xác nhận', 'Đã học', 'Lý do', 'Mã mẫu lịch sử',
     'Nội dung mẫu lịch sử', 'Cấu trúc mẫu lịch sử', 'Tệp lịch sử', 'Dòng lịch sử', 'Sheet gốc',
     'Ngân hàng / kênh', 'Tham chiếu', 'Số tiền ghi nợ', 'Thông tin cần kiểm tra', 'Tệp đầu vào',
     'Kỳ thanh toán', 'Tên trích từ nội dung', 'Các tên trích từ nội dung', 'Trạng thái trích tên',
-    'Mã mẫu giao dịch', 'Số khách hàng dùng mẫu', 'Kiểu thanh toán', 'Loại đơn vị thu hộ', 'Đơn vị thu hộ')
+    'Mã mẫu giao dịch', 'Số khách hàng dùng mẫu', 'Kiểu thanh toán', 'Loại đơn vị thu hộ', 'Đơn vị thu hộ',
+    'Trường hợp', 'Mã đề xuất cần kiểm tra')
+CASES = {'batch': 'Thu hộ tổng hợp', 'multi': 'Nhiều khách hàng', 'history_multi': 'Lịch sử chia nhiều khách hàng',
+         'suggested': 'Mã đề xuất'}
 DECISIONS = {'auto_accept': 'Có thể xác nhận', 'review': 'Cần duyệt',
              'manual_check': 'Kiểm tra thủ công', 'reject': 'Không ghép'}
 STATUSES = {'pending': 'Chưa duyệt', 'confirmed': 'Đã xác nhận & học', 'rejected': 'Đã từ chối'}
@@ -31,6 +35,19 @@ def csv_value(value):
     if not isinstance(value, str):
         return value
     return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
+
+
+def case_of(row):
+    evidence = row.get('evidence', {})
+    if evidence.get('batch_settlement'):
+        return 'batch', []
+    if evidence.get('allocation_customer_ids') or evidence.get('unknown_allocation_ids'):
+        return 'multi', evidence.get('allocation_customer_ids', []) + evidence.get('unknown_allocation_ids', [])
+    if evidence.get('history_allocation_customer_ids'):
+        return 'history_multi', evidence['history_allocation_customer_ids']
+    if row.get('suggested_customer_id'):
+        return 'suggested', [row['suggested_customer_id']]
+    return '', []
 
 
 def export_values(row):
@@ -46,7 +63,8 @@ def export_values(row):
         row.get('extracted_name'), '; '.join(row.get('extracted_names', [])),
         row.get('name_extraction', {}).get('status'), evidence.get('shared_template_id'),
         evidence.get('shared_template_customer_count'), row.get('payment_mode', 'unknown'),
-        row.get('provider_kind', 'unknown'), row.get('provider_name', '')]
+        row.get('provider_kind', 'unknown'), row.get('provider_name', ''),
+        CASES.get(case_of(row)[0], ''), ', '.join(case_of(row)[1])]
 
 
 def sheet_names(job):

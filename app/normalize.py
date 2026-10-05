@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 import re
 import unicodedata
 
-NORMALIZER_VERSION = 'rules-v5-ordered-contracts'
+NORMALIZER_VERSION = 'rules-v6-learned-id-slots'
 
 
 def fold(text: str) -> str:
@@ -29,6 +29,27 @@ IDENTIFIER_SEPARATOR = r'[\s:#=._\-\u2010-\u2015]*'
 CUSTOMER_CONTEXT = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'$')
 CUSTOMER_FIELD = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'(\d+)(?![a-z\d])')
 CUSTOMER_CONTINUATION = re.compile(r'\s*(?:[,;/+&]|va\b|and\b)\s*(\d+)(?![a-z\d]|\.\d)')
+# "ID: 035285 035447 046165", "MA KH273426 282974", "mkh. 309876. 279225.": a list of
+# customer-ID-sized values after one label. Only same-length 4-6 digit runs continue it,
+# so a following date, amount, long reference or invoice number never joins the list.
+CUSTOMER_SPACE_CONTINUATION = re.compile(r'(?:\s+|\s*\.\s*)(\d{4,6})(?![a-z\d]|[./-]\d)')
+CONTEXT_UNIT = re.compile(r'[a-z\d]+|[^\sa-z\d]')
+# Learned customer-ID slots only consider customer-ID-sized digit runs.
+SLOT_VALUE = re.compile(r'\d{4,6}')
+SLOT_TYPES = {'UNKNOWN_NUMBER', 'CUSTOMER_ID', 'CONTRACT_ID', 'INVOICE_ID', 'REFERENCE_ID', 'LOCATION_NUMBER'}
+
+
+def slot_context(lowered, start, end):
+    """Name-agnostic local layout around a number: two units before, one after, digit length.
+
+    Units are words, single punctuation marks, ``N<length>`` for another number or ``M`` for a
+    letter/digit code, so ``<invoice code>-<ID>-`` and ``<year>-<date>-`` stay different layouts.
+    Bank layouts such as ``JSC.<ID>.`` or ``MA_GD:<ref>|<ID>,`` are recognised without payer names.
+    """
+    unit = lambda u: 'N' + str(len(u)) if u.isdigit() else 'M' if any(c.isdigit() for c in u) else u
+    left = [unit(u) for u in CONTEXT_UNIT.findall(lowered[max(0, start - 40):start])][-2:]
+    right = [unit(u) for u in CONTEXT_UNIT.findall(lowered[end:end + 20])][:1]
+    return ' '.join(left) + ' _ ' + ' '.join(right) + ' #' + str(end - start)
 CONTRACT_LABEL = r'(?:(?:ma[\s_]*)?(?:hd|hop[\s_]*dong))[\s_]*(?:so)?'
 CONTRACT_CONTEXT = re.compile(r'(?<![a-z\d])' + CONTRACT_LABEL + IDENTIFIER_SEPARATOR + r'$')
 INVOICE_CONTEXT = re.compile(r'(?:hoa\s*don|inv(?:oice)?)\s*(?:so)?\s*[:#=]?\s*$')
@@ -91,7 +112,15 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         end = match.end(1)
         # Only explicit list separators extend an ID label. Preserve each digit
         # run in full; unlabeled following numbers do not extend the list.
-        while continuation := CUSTOMER_CONTINUATION.match(lowered, end):
+        width = len(match[1])
+        while True:
+            continuation = CUSTOMER_CONTINUATION.match(lowered, end)
+            if not continuation and 4 <= width <= 6:
+                continuation = CUSTOMER_SPACE_CONTINUATION.match(lowered, end)
+                if continuation and len(continuation[1]) != width:
+                    continuation = None
+            if not continuation:
+                break
             customer_spans.append(continuation.span(1))
             end = continuation.end(1)
     protected.extend(customer_spans)
@@ -213,6 +242,10 @@ def normalize_text(raw: str) -> NormalizedTransaction:
                 numeric_type = 'CUSTOMER_ID'
             elif CUSTOMER_CONTEXT.search(prefix):
                 numeric_type = 'CUSTOMER_ID'
+                # "Ma KH: 062376KBNNTTSP_..." glues a bank suffix to the ID; keep the digits.
+                glued_suffix = re.fullmatch(r'(\d{4,})[a-z]+', value)
+                if glued_suffix:
+                    value = glued_suffix[1]
             elif INVOICE_CONTEXT.search(prefix):
                 numeric_type = 'INVOICE_ID'
             elif REFERENCE_CONTEXT.search(prefix):
@@ -230,6 +263,9 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         feature = {'type': 'number', 'numeric_type': numeric_type, 'slot': slot,
                    'value': value, 'raw_value': raw[offsets[match.start()]:offsets[match.end()]], 'format': code_format, 'anchor': anchor,
                    'position': len(segments), 'offset': match.start(), 'end': match.end()}
+        if SLOT_VALUE.fullmatch(value) and numeric_type in SLOT_TYPES:
+            start = match.start() + (original_value.find(value) if value != original_value else 0)
+            feature['context'] = slot_context(lowered, start, start + len(value))
         numbers.append(feature)
         segments.append(feature.copy())
     flush()

@@ -12,9 +12,9 @@ from app.normalize import normalize_text
 from conftest import workbook
 
 
-def add(core, factory, raw, cid='001545', name='Trường tiểu học A', row=1):
+def add(core, factory, raw, cid='001545', name='Trường tiểu học A', row=1, payment_mode=''):
     with factory.begin() as session:
-        core.learn(session, ExcelTransaction(row, raw, date='2026-07-02'), cid, name)
+        core.learn(session, ExcelTransaction(row, raw, date='2026-07-02', payment_mode=payment_mode), cid, name)
 
 
 def test_bidv_layout_and_embedded_mkh_preserve_actual_customer_id():
@@ -31,7 +31,7 @@ def test_unique_payer_history_recovers_customer_without_name_but_shared_account_
     core = Core()
     july = 'TKThe :107873404892 tai ICBVVNVX. DO VAN CUONG chuyen tien-020097040001'
     august = 'TKThe :107873404892, tai ICBVVNVX. DO VAN CUONG chuyen tien-020097040002'
-    add(core, factory, july)
+    add(core, factory, july, payment_mode='self')  # payer-only evidence needs a confirmed self-payment route
     with factory() as session:
         result = core.classify(session, august)
         assert result['customer_id'] == '001545'

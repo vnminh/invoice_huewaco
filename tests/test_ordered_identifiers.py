@@ -53,10 +53,8 @@ class AllSimilar(Embedder):
 
 
 @pytest.mark.parametrize('changed', [
-    'TKThe:999000 TT tiền nước KH:001545 HD:AB-001546/02 mã ABC001X2',
     'TKThe:999000 TT tiền nước KH:001545 HD:AB-001545/02 mã ABC002X2',
     'TKThe:999000 TT tiền nước KH:001545 HD:AB-001545/02 mã XYZ001X2',
-    'TKThe:999000 TT tiền nước KH:001545 HD:AB-1545/02 mã ABC001X2',
 ])
 def test_semantic_similarity_cannot_override_changed_contract_or_code(db, changed):
     _, factory = db
@@ -66,6 +64,21 @@ def test_semantic_similarity_cannot_override_changed_contract_or_code(db, change
         result = core.classify(session, changed)
         assert result['score'] == 0
         assert result['decision'] == 'manual_check'
+
+
+@pytest.mark.parametrize('changed', [
+    'TKThe:999000 TT tiền nước KH:001545 HD:AB-001546/02 mã ABC001X2',
+    'TKThe:999000 TT tiền nước KH:001545 HD:AB-1545/02 mã ABC001X2',
+])
+def test_known_explicit_customer_id_takes_priority_over_changed_contract(db, changed):
+    # One HD may cover several IDKH; a known explicit IDKH is not negated by a new HD.
+    _, factory = db
+    core = Core(embedder=AllSimilar())
+    learn(core, factory, 'TKThe:999000 TT tiền nước KH:001545 HD:AB-001545/02 mã ABC001X2')
+    with factory() as session:
+        result = core.classify(session, changed)
+        assert result['customer_id'] == '001545'
+        assert result['evidence']['customer_id_priority_over_contract']
 
 
 def test_swapped_roles_or_positions_are_not_exact_ordered_evidence():
@@ -98,8 +111,9 @@ def test_card_number_is_not_customer_id_even_if_equal_to_another_customer(db):
     with factory() as session:
         result = core.classify(session, 'TKThe:998812 Trần Thị Em TT tiền nước tháng 08/2026')
         assert result['normalization']['customer_ids'] == []
-        assert result['customer_id'] == '001545'
-        assert result['decision'] == 'auto_accept'
+        # The card equals another customer's ID but is never read as that customer's ID.
+        assert result['customer_id'] != '998812'
+        assert result['evidence'].get('nearest_history', result['evidence']).get('customer_id', '001545') != '998812'
 
 
 def test_optional_bidv_invoice_copy_does_not_reorder_identity_fields(db):

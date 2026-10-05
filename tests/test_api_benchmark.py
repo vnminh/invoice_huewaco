@@ -1,3 +1,5 @@
+import io
+import zipfile
 import json
 import csv
 import time
@@ -47,8 +49,10 @@ def test_api_roundtrip_import_batch_review_and_export(db, tmp_path):
             assert job['progress']==2
             rows=client.get('/transactions',params={'job_id':job_id}).json()['items']
             assert {r['decision'] for r in rows}=={'auto_accept','reject'}
-            assert client.get('/export/'+job_id).status_code==200
-            assert 'row_index' in client.get('/export/'+job_id).text
+            export=client.get('/export/'+job_id)
+            assert export.status_code==200
+            with zipfile.ZipFile(io.BytesIO(export.content)) as archive:
+                assert 'row_index' in archive.read(archive.namelist()[0]).decode('utf-8-sig')
     finally:
         application.state.executor.shutdown(wait=True)
 
