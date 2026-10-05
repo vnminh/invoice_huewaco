@@ -22,8 +22,15 @@ DATE = re.compile(
     r'|\b(?:thang|ky|month)\s*(?:0[1-9]|1[0-2])20\d{2}\b', re.I)
 # Keep digit-leading bank codes and all letter/number runs intact.
 TOKEN = re.compile(r'\d+(?:[.,]\d{3})+(?![a-z\d])|[a-z\d]+')
-CUSTOMER_CONTEXT = re.compile(r'(?:idkh|mkh|mk|ma\s*(?:kh|khach\s*hang|danh\s*bo)|danh\s*bo|kh|customer|id)\s*[:#=]?\s*$')
-CONTRACT_CONTEXT = re.compile(r'(?:hd|hop\s*dong)\s*(?:so)?\s*[:#=]?\s*$')
+CUSTOMER_LABEL = (r'(?:ma[\s_]*(?:so[\s_]*)?(?:khach[\s_]*hang|kh|danh[\s_]*bo)'
+                  r'|id[\s_]*kh|m[\s_]*kh|mk|danh[\s_]*bo|khach[\s_]*hang|kh'
+                  r'|customer(?:[\s_]*(?:id|code|number))?|id)')
+IDENTIFIER_SEPARATOR = r'[\s:#=._\-\u2010-\u2015]*'
+CUSTOMER_CONTEXT = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'$')
+CUSTOMER_FIELD = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'(\d+)(?![a-z\d])')
+CUSTOMER_CONTINUATION = re.compile(r'\s*(?:[,;/+&]|va\b|and\b)\s*(\d+)(?![a-z\d]|\.\d)')
+CONTRACT_LABEL = r'(?:(?:ma[\s_]*)?(?:hd|hop[\s_]*dong))[\s_]*(?:so)?'
+CONTRACT_CONTEXT = re.compile(r'(?<![a-z\d])' + CONTRACT_LABEL + IDENTIFIER_SEPARATOR + r'$')
 INVOICE_CONTEXT = re.compile(r'(?:hoa\s*don|inv(?:oice)?)\s*(?:so)?\s*[:#=]?\s*$')
 REFERENCE_CONTEXT = re.compile(r'(?:ref|reference|ma\s*gd)\s*[:#=/]?\s*$')
 CARD_CONTEXT = re.compile(r'(?:tkthe|tk\s*the|the)\s*[:#=]?\s*$')
@@ -78,15 +85,25 @@ def normalize_text(raw: str) -> NormalizedTransaction:
     lowered = fold(raw)
     offsets = _source_offsets(raw)
     protected = []
+    customer_spans = []
+    for match in CUSTOMER_FIELD.finditer(lowered):
+        customer_spans.append(match.span(1))
+        end = match.end(1)
+        # Only explicit list separators extend an ID label. Preserve each digit
+        # run in full; unlabeled following numbers do not extend the list.
+        while continuation := CUSTOMER_CONTINUATION.match(lowered, end):
+            customer_spans.append(continuation.span(1))
+            end = continuation.end(1)
+    protected.extend(customer_spans)
     contract_tokens = []
-    for m in re.finditer(r'\b(?:hd|hop\s*dong)\s*(?:so)?\s*[:#=]?\s*([a-z\d]+(?:[-/][a-z\d]+)*)', lowered):
+    for m in re.finditer(r'(?<![a-z\d])' + CONTRACT_LABEL + IDENTIFIER_SEPARATOR + r'([a-z\d]+(?:[-/][a-z\d]+)*)', lowered):
+        if re.match(r'(?:ky|thang|month)\d', m[1]) and DATE.match(lowered, m.start(1)):
+            continue  # e.g. "Ma HD-Ky082026" gives a billing period, not a contract ID.
         value = re.split(r'-(?:020097|ctlnhidi)', m[1])[0]
         if any(char.isdigit() for char in value):
             end = m.start(1) + len(value)
             contract_tokens.append(_Token(value, m.start(1), end))
             protected.append((m.start(1), end))
-    for m in re.finditer(r'(?:idkh|mkh|ma\s*(?:kh|khach\s*hang)|(?:hd|hop\s*dong)\s*(?:so)?)\s*[:#=]?\s*([a-z\d]+)', lowered):
-        protected.append(m.span(1))
     dates = [m for m in DATE.finditer(lowered) if not any(a <= m.start() < b for a, b in protected)]
     # Partial date ranges only when a clear day/range context is present.
     occupied = [m.span() for m in dates]
@@ -98,7 +115,7 @@ def normalize_text(raw: str) -> NormalizedTransaction:
     for start, end in date_spans:
         masked[start:end] = ' ' * (end - start)
     masked = ''.join(masked)
-    roles = {}
+    roles = {span: 'CUSTOMER_ID' for span in customer_spans}
     roles.update({m.span(): 'CONTRACT_ID' for m in contract_tokens})
     invoice_codes = set()
     # BIDV O@L: protocol, reference, then IDKH. The invoice code may be absent.
@@ -120,10 +137,6 @@ def normalize_text(raw: str) -> NormalizedTransaction:
                 roles[(start, start + len(suffix[2]))] = 'CUSTOMER_ID'
     for m in re.finditer(r'kbnnttsp_(kba\d{12,})\b', lowered):
         roles[m.span(1)] = 'BANK_REFERENCE'
-    for m in re.finditer(r'(?:idkh|mkh|ma\s*(?:kh|khach\s*hang))\s*[:#=]?\s*\d{4,6}((?:\s*(?:va|&|,)\s*\d{6})+)', lowered):
-        for continuation in re.finditer(r'\d{6}', m[1]):
-            start = m.start(1) + continuation.start()
-            roles[(start, start + 6)] = 'CUSTOMER_ID'
     for expression in (r'(?<=rem\s)[a-z\d]+', r'dtls-ref/([a-z\d]+)',
                        r'-((?:020097|ctlnhidi)[a-z\d]+)', r'@@(\d+)@@'):
         for m in re.finditer(expression, lowered):
@@ -141,7 +154,17 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             text_group.clear()
 
     events = [(a, 'date', (a, b)) for a, b in date_spans]
-    for m in TOKEN.finditer(masked):
+    tokens = []
+    for match in TOKEN.finditer(masked):
+        labeled_numbers = [span for span in customer_spans if match.start() <= span[0] and span[1] <= match.end()]
+        if len(labeled_numbers) > 1:
+            # TOKEN also recognizes thousands separators in amounts. An explicit
+            # customer list such as KH:123,456 must keep its two values separate.
+            tokens.extend(_Token(part.group(), match.start() + part.start(), match.start() + part.end())
+                          for part in re.finditer(r'[a-z\d]+', match.group()))
+        else:
+            tokens.append(match)
+    for m in tokens:
         if any(a < m.end() and b > m.start() for a, b in (t.span() for t in contract_tokens)):
             continue
         prefix = masked[max(0, m.start() - 48):m.start()]
@@ -177,7 +200,7 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         prefix = masked[max(0, match.start() - 48):match.start()]
         numeric_type = roles.get(match.span(), 'UNKNOWN_NUMBER')
         original_value = value
-        embedded_id = re.fullmatch(r'(?:mkh|mk|idkh|kh)(\d{4,6})', value)
+        embedded_id = re.fullmatch(r'(?:makhachhang|makh|mkh|mk|idkh|kh)(\d+)', value)
         if numeric_type == 'UNKNOWN_NUMBER':
             if CONTRACT_CONTEXT.search(prefix):
                 numeric_type = 'CONTRACT_ID'

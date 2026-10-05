@@ -43,9 +43,19 @@ Bấm **mẫu bố cục** ở khu vực Học dữ liệu mới để xem tiêu
 | `LOAIDONVITHUHO` | Không | `bank`, `wallet`, `other`, `unknown`. |
 | `DONVITHUHO` | Không | Tên ngân hàng/ví/dịch vụ thu hộ. |
 
-Trong luồng học, NER có thể thêm một tên làm bí danh cho **IDKH đã xác nhận**, không tự suy IDKH hoặc thay tên chuẩn. Có nhiều tên đáng tin thì không tự gắn tất cả vào một khách hàng. Ngày/kỳ tiếp tục được bỏ khỏi đặc trưng so khớp như trước.
+Trong luồng học, NER có thể thêm một tên làm bí danh cho **IDKH đã xác nhận**, không tự suy IDKH hoặc thay tên chuẩn. Có nhiều tên đáng tin thì không tự gắn tất cả vào một khách hàng. Với nội dung có nhiều IDKH, không tự gắn tên trích được vào các hồ sơ; dùng `TENKH` đã kiểm tra cho từng IDKH. Ngày/kỳ tiếp tục được bỏ khỏi đặc trưng so khớp như trước.
 
-Nếu nội dung ghi rõ mã khách hàng khác nhãn được xác nhận hoặc nhiều mã khách hàng, dòng bị từ chối học và xuất hiện trong báo cáo lỗi. Kiểm tra tệp hoặc sửa kiến thức liên quan; không bỏ/cắt mã số để ép học thành công. Các dòng khác tiếp tục được xử lý. Một HD được phép liên kết nhiều IDKH; không từ chối chỉ vì HD đã xuất hiện ở khách hàng khác.
+Một giao dịch có thể thanh toán cho nhiều khách hàng. Nội dung nhiều IDKH được học bình thường khi mã xác nhận nằm trong danh sách đó. Mỗi dòng có **một IDKH đã xác nhận**; để học cho hai khách hàng, lặp lại nguyên văn `NOIDUNG` ở hai dòng với `IDKH`/`TENKH` tương ứng. Không ghép hai mã vào một giá trị IDKH, không tự chia số tiền, không tự học các mã chưa được xác nhận.
+
+Ví dụ hai dòng sau tạo hai liên kết khách hàng với cùng mẫu; toàn bộ số và thứ tự trong nội dung được giữ:
+
+```csv
+IDKH,TENKH,NOIDUNG
+001234,Nguyễn Văn A,"TT tiền nước Ma KH-001234,005678 kỳ 8/2026"
+005678,Trần Thị B,"TT tiền nước Ma KH-001234,005678 kỳ 8/2026"
+```
+
+Mã xác nhận hoàn toàn khác các IDKH ghi rõ vẫn được báo lỗi riêng dòng để kiểm tra; các dòng khác tiếp tục xử lý. Một HD được phép liên kết nhiều IDKH; không từ chối chỉ vì HD đã xuất hiện ở khách hàng khác. Tệp đã nhập có lỗi có thể được tải lại để học các dòng đã sửa; các receipt giữ những dòng đã học khỏi bị học trùng.
 
 ## Nhận diện tổng quát và thông báo lỗi bố cục
 
