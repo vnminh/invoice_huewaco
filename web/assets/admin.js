@@ -4,8 +4,9 @@ const pct=value=>value==null?'—':(Number(value)*100).toFixed(1)+'%';
 const decisions={auto_accept:'Có thể xác nhận',review:'Cần duyệt',manual_check:'Kiểm tra thủ công',reject:'Không ghép'},statuses={queued:'Đang chờ',running:'Đang xử lý',cancelling:'Đang dừng',cancelled:'Đã dừng',interrupted:'Bị gián đoạn',completed:'Hoàn tất',failed:'Chưa hoàn tất',pending:'Chưa duyệt',confirmed:'Đã xác nhận & học',rejected:'Đã từ chối'},kinds={knowledge_import:'Nhập dữ liệu đã xác nhận',batch_classify:'Đối soát giao dịch',review_recovery:'Tiếp tục học đã xác nhận'};
 const numericTypes={CUSTOMER_ID:'Mã khách hàng',CONTRACT_ID:'Mã hợp đồng',CARD_ID:'Thẻ người trả tiền',ACCOUNT_ID:'Tài khoản người trả tiền',MIXED_CODE:'Mã chữ/số',INVOICE_CODE:'Mã hóa đơn ngân hàng',INVOICE_ID:'Số hóa đơn',BANK_REFERENCE:'Tham chiếu ngân hàng',BANK_PROTOCOL:'Trường ngân hàng',REFERENCE_ID:'Mã tham chiếu',RECEIVER_ACCOUNT:'Tài khoản nhận',LOCATION_NUMBER:'Số cơ sở / địa điểm',UNKNOWN_NUMBER:'Số chưa xác định',QUANTITY:'Lượng tiêu thụ',AMOUNT:'Số tiền',DATE:'Ngày tháng'};
 const pageInfo={workspace:['Đối soát giao dịch','Đối chiếu nội dung chuyển tiền với lịch sử, kiểm tra kết quả và bổ sung kiến thức đã xác nhận.'],knowledge:['Học dữ liệu mới','Bổ sung tệp đã xác nhận hoặc thêm một cách ghi mới cho khách hàng.'],database:['Quản lý kiến thức','Tìm khách hàng, xem các mẫu đã học và quản lý dữ liệu ngay tại đây.'],tasks:['Tác vụ xử lý','Theo dõi tiến trình, dừng xử lý, tải kết quả hoặc dọn các tệp làm việc.'],help:['Hướng dẫn sử dụng','Từ đối soát đến xác nhận và quản lý kiến thức cho những lần xử lý tiếp theo.']};
-let dbReady=false,offset=0,total=0,rows=new Map(),selected=null,activeJob=null,activeImportId=null,viewCleared=false,resultRequestId=0,statsRequestId=0,polling=false,toastTimer,selectedIds=new Set(),jobItems=[],lastStats={};
+let dbReady=false,offset=0,total=0,rows=new Map(),selected=null,activeJob=null,activeImportId=null,viewCleared=false,resultRequestId=0,statsRequestId=0,jobsRequestId=0,polling=false,toastTimer,selectedIds=new Set(),jobItems=[],lastStats={};
 let databaseTables=[],databaseOffset=0,databaseRequestId=0,databaseTableRequestId=0,databaseCustomerScope=null,databaseTemplateScope=null,databaseSelected=null,databaseReturnFocus=null,confirmResolver=null,confirmReturnFocus=null,databaseBulkScope=null,layoutPromise=null,layoutReturnFocus=null;
+const pendingActions=new WeakSet(),selectUpdates=new WeakMap();
 
 const paymentLabels={unknown:'Chưa xác định',proxy:'Thu hộ qua ngân hàng / ví',self:'Khách hàng tự trả'},providerLabels={unknown:'Chưa xác định',bank:'Ngân hàng',wallet:'Ví điện tử',other:'Dịch vụ khác'};
 function paymentFields(prefix,value={},automatic=false,requireSelection=false){
@@ -67,7 +68,7 @@ function closeLayout(){$('layoutModal').classList.add('hidden');if(layoutReturnF
 function transferDateText(value){if(!value)return 'Chưa có ngày giờ';const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\s)?(.*)$/);return match?match[3]+'/'+match[2]+'/'+match[1]+(match[4]?' '+match[4]:''):String(value)}
 function paymentPeriodSummary(row){const matches=row.payment_period_evidence?.matches||[],texts=[...new Set(matches.map(match=>match.text))];return '<div class="fieldrow"><div><label>Kỳ thanh toán hóa đơn nước</label><b>'+esc(row.payment_period||'Chưa xác định')+'</b><p class="hint">'+(texts.length?'Lấy từ nội dung: '+esc(texts.join('; ')):'Chưa xác định được kỳ thanh toán từ nội dung; cần kiểm tra thêm.')+'</p></div><div><label>Thời gian chuyển khoản</label><b>'+esc(transferDateText(row.date))+'</b><p class="hint">Theo cột ngày giờ giao dịch trong tệp ngân hàng.</p></div></div>'}
 function nameExtractionSummary(row){const info=row.name_extraction||{},entities=info.entities||[],names=row.extracted_names||[];const labels={'bank_field':'Trường tên trong nội dung ngân hàng','bank_field+ner':'Trường tên đã được nhận diện tự động','ner':'Tên nhận diện tự động'};return '<div class="innerdetails"><label>Tên trong nội dung chuyển tiền</label>'+(names.length?'<b>'+names.map(esc).join('; ')+'</b><p class="hint">'+[...new Set(entities.filter(entity=>names.includes(entity.name)).map(entity=>labels[entity.source]||'Nội dung chuyển tiền'))].map(esc).join('; ')+'. Tên này là gợi ý để kiểm tra, chưa xác định mã khách hàng.</p>':'<p class="hint">Chưa trích được tên đáng tin cậy từ nội dung. Bạn có thể nhập tên đã kiểm tra khi xác nhận.</p>')+(info.status==='unavailable'?'<p class="hint">Tính năng nhận diện tên tự động chưa sẵn sàng; các bước đối soát khác vẫn tiếp tục.</p>':'')+'</div>'}
-async function action(button,work){if(button)button.disabled=true;try{return await work()}catch(error){toast(error.message,true)}finally{if(button)button.disabled=(button.classList.contains('needs-db')&&!dbReady)||button.dataset.stopping==='true'}}
+async function action(button,work){if(button){pendingActions.add(button);button.disabled=true}try{return await work()}catch(error){toast(error.message,true)}finally{if(button){pendingActions.delete(button);button.disabled=(button.classList.contains('needs-db')&&!dbReady)||button.dataset.stopping==='true'}}}
 function askConfirmation(title,text,label='Xác nhận'){if(confirmResolver)return Promise.resolve(false);confirmReturnFocus=document.activeElement;$('confirmTitle').textContent=title;$('confirmText').textContent=text;$('confirmAccept').textContent=label;$('confirmModal').classList.remove('hidden');$('confirmCancel').focus();return new Promise(resolve=>{confirmResolver=resolve})}
 function finishConfirmation(answer){const resolve=confirmResolver;confirmResolver=null;$('confirmModal').classList.add('hidden');if(confirmReturnFocus?.isConnected)confirmReturnFocus.focus();resolve?.(answer)}
 function selectTab(id){for(const button of document.querySelectorAll('[data-tab]')){const active=button.dataset.tab===id;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;$(button.dataset.tab).classList.toggle('hidden',!active)}$('pageTitle').textContent=pageInfo[id][0];$('breadcrumb').textContent=pageInfo[id][0];$('pageSubtitle').textContent=pageInfo[id][1];if(id==='database'&&dbReady)loadDatabaseTables().catch(error=>toast(error.message,true));if(id==='tasks')jobs().catch(error=>toast(error.message,true))}
@@ -83,11 +84,57 @@ function customerAutocomplete(id,optionsId,nameId){let timer,version=0;$(id).oni
 function showReview(row){if(!row)return;selected=row;const evidence=row.evidence||{},history=evidence.matched_pattern?evidence:evidence.nearest_history||{},detected=row.normalization?.customer_ids||[];const suggested=row.customer_id||(detected.length===1&&detected[0].length<=100?detected[0]:'');$('reviewBody').innerHTML='<div class="buttons"><b>'+esc(row.confirmed_customer_name||row.customer_name||'Chưa xác định khách hàng')+'</b><span class="pill '+esc(row.decision)+'">'+pct(row.score)+' · '+esc(decisions[row.decision])+'</span></div><p class="hint">'+esc(evidence.reason_vi||'Chưa đủ bằng chứng để ghép; cần kiểm tra nội dung và khách hàng.')+'</p>'+paymentPeriodSummary(row)+paymentModeSummary(row)+nameExtractionSummary(row)+sharedTemplateSummary(history)+'<div class="twopane"><div><label>Giao dịch đang đối soát</label>'+ (row.sheet?'<p class="hint">Sheet '+esc(row.sheet)+(row.row_index?' · Dòng '+row.row_index:'')+(row.reference?' · Tham chiếu '+esc(row.reference):'')+'</p>':'')+'<div class="rawfull">'+esc(row.raw)+'</div></div><div><label>'+(evidence.matched_pattern?'Mẫu lịch sử đã khớp':'Mẫu gần nhất trong lịch sử')+'</label><div class="rawfull">'+esc(history.matched_pattern||'Chưa có mẫu phù hợp trong lịch sử.')+'</div>'+(history.pattern_source?'<p class="hint">'+esc(history.pattern_source.file||'')+(history.pattern_source.row?' · Dòng '+esc(history.pattern_source.row):'')+'</p>':'')+'</div></div>'+(row.status==='pending'?'<form id="reviewForm"><div class="divider"></div><h3>Xác nhận khách hàng để học</h3>'+paymentFields('reviewPayment',row,true)+'<div class="fieldrow"><div><label for="correctId">Mã khách hàng</label><input id="correctId" maxlength="100" required value="'+esc(suggested)+'" list="customerOptions"><datalist id="customerOptions"></datalist></div><div><label for="correctName">Tên khách hàng / bí danh đã kiểm tra</label><input id="correctName" maxlength="300" required value="'+esc(row.customer_name||row.extracted_name||'')+'"></div></div>'+(row.extracted_name?'<div class="buttons"><button id="useExtractedName" class="small" type="button">Dùng tên trong nội dung</button></div>':'')+'<p class="hint">Khách hàng mới sẽ được thêm khi xác nhận. Nội dung này sẽ trở thành một mẫu trong lịch sử của khách hàng.</p><div class="buttons"><button id="acceptReview" class="primary" type="submit">Xác nhận & học</button><button id="rejectReview" class="danger" type="button">Không ghép khách hàng này</button></div></form>':'<p class="hint">'+esc(statuses[row.status])+(row.learned?' · '+esc(row.confirmed_customer_id||''):'')+'</p>')+identifierEvidence(evidence.confirmed_identifier_owners?evidence:history)+(history.numeric_comparison?'<details id="numberDetails" class="innerdetails"><summary>Đối chiếu số theo đúng thứ tự</summary>'+orderedEvidence(history)+'</details>':'')+(history.matched_template?'<details id="templateDetails"><summary>Nội dung & cấu trúc đối chiếu</summary><label>Mẫu trong lịch sử</label><pre>'+esc(history.matched_template)+'</pre><label>Mẫu giao dịch hiện tại</label><pre>'+esc(history.query_template||row.normalization?.template||'')+'</pre>'+(history.match_steps_vi?'<ol>'+history.match_steps_vi.map(step=>'<li>'+esc(step)+'</li>').join('')+'</ol>':'')+'</details>':'');$('modalBg').classList.remove('hidden');$('closeModal').focus();if(row.status==='pending'){$('reviewForm').onsubmit=event=>{event.preventDefault();action(event.submitter,()=>feedback(true))};$('rejectReview').onclick=()=>action($('rejectReview'),()=>feedback(false));customerAutocomplete('correctId','customerOptions','correctName');if($('useExtractedName'))$('useExtractedName').onclick=()=>{$('correctName').value=row.extracted_name}}}
 async function feedback(accept){const row=selected;if(!row)return;const id=accept?$('correctId').value.trim():null;if(accept&&!id)throw Error('Nhập hoặc chọn mã khách hàng trước khi xác nhận.');await post('/feedback',{transaction_id:row.id,accepted:accept,correct_customer_id:id,customer_name:accept?$('correctName').value.trim():'',...(accept?paymentData('reviewPayment'):{})});$('modalBg').classList.add('hidden');selectedIds.delete(row.id);toast(accept?'Đã xác nhận và bổ sung vào kiến thức.':'Đã ghi nhận từ chối ghép khách hàng này.');await refresh()}
 function setExportLinks(){for(const [id,suffix] of [['resultXlsx','/results.xlsx'],['resultCsv','/csv.zip']]){const element=$(id);element.classList.toggle('disabled',!activeJob);if(activeJob)element.href='/export/'+encodeURIComponent(activeJob)+suffix;else element.removeAttribute('href')}}
+function updateSelectOptions(select,markup,selectedValue){
+  let state=selectUpdates.get(select);
+  if(!state){
+    state={markup:null,pending:null};selectUpdates.set(select,state);
+    select.addEventListener('blur',()=>queueMicrotask(()=>{
+      const update=state.pending;
+      if(update)updateSelectOptions(select,update.markup,update.selectedValue);
+    }));
+  }
+  // Native dropdowns close if their options are replaced while the user is choosing.
+  if(document.activeElement===select){state.pending={markup,selectedValue};return}
+  state.pending=null;
+  const value=selectedValue();
+  if(state.markup!==markup){select.innerHTML=markup;state.markup=markup}
+  if(select.value!==value)select.value=value;
+}
+function syncJobNodes(parent,fresh){
+  const keyOf=node=>node.nodeType===1?node.getAttribute('data-job-key'):null;
+  const existing=[...parent.childNodes],keyed=new Map(existing.filter(keyOf).map(node=>[keyOf(node),node])),retained=new Set();
+  const sources=[...fresh.childNodes],nextKeys=new Set(sources.map(keyOf).filter(Boolean));
+  // Remove expired sections first so remaining focused elements need not be moved.
+  for(const [key,node] of keyed)if(!nextKeys.has(key))node.remove();
+  let cursor=parent.firstChild;
+  for(const source of sources){
+    const key=keyOf(source);
+    let node=key?keyed.get(key):cursor;
+    if(node&&(node.nodeType!==source.nodeType||node.nodeName!==source.nodeName||keyOf(node)!==key))node=null;
+    if(!node){node=source.cloneNode(true);parent.insertBefore(node,cursor)}
+    else{
+      if(node!==cursor)parent.insertBefore(node,cursor);
+      if(node.nodeType===1){
+        // Keep the existing details/summary elements and the user's open/closed state.
+        const preserve=name=>node.tagName==='DETAILS'&&name==='open'||name==='disabled'&&pendingActions.has(node);
+        for(const attribute of [...node.attributes])if(!preserve(attribute.name)&&!source.hasAttribute(attribute.name))node.removeAttribute(attribute.name);
+        for(const attribute of source.attributes)if(!preserve(attribute.name)&&node.getAttribute(attribute.name)!==attribute.value)node.setAttribute(attribute.name,attribute.value);
+        syncJobNodes(node,source);
+      }else if(node.nodeValue!==source.nodeValue)node.nodeValue=source.nodeValue;
+    }
+    retained.add(node);cursor=node.nextSibling;
+  }
+  for(const node of existing)if(!retained.has(node))node.remove();
+}
+function renderJobs(markup){
+  const fresh=document.createElement('template');fresh.innerHTML=markup;
+  syncJobNodes($('jobs'),fresh.content);
+}
 function jobStage(job){
   if(job.status!=='running')return '';
   const summary=job.summary||{};
-  if(summary.phase==='reading')return '<p class="hint">Đang đọc tệp giao dịch…</p>';
-  if(summary.phase==='classifying')return '<p class="hint">Đang đối soát sheet <b>'+esc(summary.current_sheet)+'</b>'+(summary.current_row?' · Dòng '+esc(summary.current_row):'')+'. Kết quả được cập nhật theo từng nhóm.</p>';
+  if(summary.phase==='reading')return '<p class="hint" data-job-key="stage">Đang đọc tệp giao dịch…</p>';
+  if(summary.phase==='classifying')return '<p class="hint" data-job-key="stage">Đang đối soát sheet <b>'+esc(summary.current_sheet)+'</b>'+(summary.current_row?' · Dòng '+esc(summary.current_row):'')+'. Kết quả được cập nhật theo từng nhóm.</p>';
   return '';
 }
 function sheetSummary(job){
@@ -95,16 +142,49 @@ function sheetSummary(job){
   const reasons={confirmed_layout:'dữ liệu đã gán nhãn, dùng mục Học dữ liệu mới',raw_layout:'sheet ngân hàng chưa gán nhãn, dùng mục Đối soát',unsupported_layout:'không nhận diện được bố cục giao dịch',ambiguous_layout:'có nhiều cột cùng vai trò, cần làm rõ tiêu đề'};
   
   const corrections=skipped.some(item=>['unsupported_layout','ambiguous_layout'].includes(item.reason));
-  return (Object.keys(counts).length?'<details><summary>Giao dịch theo sheet</summary>'+Object.entries(counts).map(([name,count])=>'<div class="hint">'+esc(name)+' · '+(Number(count)?Number(count).toLocaleString('vi-VN')+' dòng':'Chưa có kết quả')+'</div>').join('')+'</details>':'')+
-    (skipped.length?'<details open><summary>'+skipped.length+' sheet được bỏ qua</summary>'+skipped.map(item=>'<div class="hint"><b>'+esc(item.sheet)+'</b> · '+esc(reasons[item.reason]||item.reason)+'</div>').join('')+(corrections?'<p class="hint">Nếu hệ thống không nhận diện được bố cục, hãy sửa theo <a href="#layoutModal" data-layout="'+kind+'">mẫu bố cục</a>.</p>':'')+'</details>':'');
+  return (Object.keys(counts).length?'<details data-job-key="sheets"><summary>Giao dịch theo sheet</summary>'+Object.entries(counts).map(([name,count])=>'<div class="hint" data-job-key="sheet:'+esc(name)+'">'+esc(name)+' · '+(Number(count)?Number(count).toLocaleString('vi-VN')+' dòng':'Chưa có kết quả')+'</div>').join('')+'</details>':'')+
+    (skipped.length?'<details data-job-key="skipped" open><summary>'+skipped.length+' sheet được bỏ qua</summary>'+skipped.map(item=>'<div class="hint" data-job-key="sheet:'+esc(item.sheet)+'"><b>'+esc(item.sheet)+'</b> · '+esc(reasons[item.reason]||item.reason)+'</div>').join('')+(corrections?'<p class="hint" data-job-key="layout">Nếu hệ thống không nhận diện được bố cục, hãy sửa theo <a href="#layoutModal" data-layout="'+kind+'">mẫu bố cục</a>.</p>':'')+'</details>':'');
 }
 function rowErrorSummary(job){
   const count=job.summary?.row_error_count||0;
   if(!count)return '';
   const samples=(job.summary.row_errors||[]).slice(0,20),stages={read:'Đọc dữ liệu',prepare:'Chuẩn bị nội dung',learn:'Học kiến thức',classify:'Đối soát'};
-  return '<details><summary>'+Number(count).toLocaleString('vi-VN')+' dòng lỗi đã bỏ qua</summary><p class="hint">Các dòng còn lại tiếp tục được xử lý. Sửa các dòng lỗi trong tệp nguồn rồi nhập lại khi cần.</p><div class="tablewrap"><table><thead><tr><th>Sheet</th><th>Dòng trong tệp</th><th>Bước xử lý</th><th>Nguyên nhân</th></tr></thead><tbody>'+samples.map(issue=>'<tr><td>'+esc(issue.sheet)+'</td><td>'+esc(issue.row_index??('Không xác định · vị trí XML '+(issue.row_position??'—')))+'</td><td>'+esc(stages[issue.stage]||issue.stage)+'</td><td>'+esc(viError(issue.error))+'</td></tr>').join('')+'</tbody></table></div>'+(count>samples.length?'<p class="hint">Hiển thị '+samples.length+' dòng đầu. CSV chứa toàn bộ danh sách lỗi.</p>':'')+'<div class="buttons"><a class="button small" href="/jobs/'+encodeURIComponent(job.id)+'/errors.csv">Tải danh sách dòng lỗi CSV</a></div></details>';
+  return '<details data-job-key="row-errors"><summary>'+Number(count).toLocaleString('vi-VN')+' dòng lỗi đã bỏ qua</summary><p class="hint" data-job-key="explanation">Các dòng còn lại tiếp tục được xử lý. Sửa các dòng lỗi trong tệp nguồn rồi nhập lại khi cần.</p><div class="tablewrap" data-job-key="table"><table><thead><tr><th>Sheet</th><th>Dòng trong tệp</th><th>Bước xử lý</th><th>Nguyên nhân</th></tr></thead><tbody>'+samples.map(issue=>'<tr><td>'+esc(issue.sheet)+'</td><td>'+esc(issue.row_index??('Không xác định · vị trí XML '+(issue.row_position??'—')))+'</td><td>'+esc(stages[issue.stage]||issue.stage)+'</td><td>'+esc(viError(issue.error))+'</td></tr>').join('')+'</tbody></table></div>'+(count>samples.length?'<p class="hint" data-job-key="more">Hiển thị '+samples.length+' dòng đầu. CSV chứa toàn bộ danh sách lỗi.</p>':'')+'<div class="buttons" data-job-key="actions"><a class="button small" href="/jobs/'+encodeURIComponent(job.id)+'/errors.csv">Tải danh sách dòng lỗi CSV</a></div></details>';
 }
-async function jobs(){jobItems=(await api('/jobs')).filter(job=>job.kind!=='benchmark');const imports=jobItems.find(job=>job.kind==='knowledge_import'&&['queued','running','cancelling'].includes(job.status));activeImportId=imports?.id||null;$('stopImportButton').classList.toggle('hidden',!imports);$('stopImportButton').dataset.stopping=String(imports?.status==='cancelling');$('stopImportButton').disabled=imports?.status==='cancelling';$('stopImportButton').textContent=imports?.status==='cancelling'?'Đang dừng…':'Dừng nhập';const files=jobItems.filter(job=>job.kind==='batch_classify');const previous=activeJob;if(!files.some(job=>job.id===activeJob))activeJob=files[0]?.id||null;$('jobFilter').innerHTML=files.length?files.map(job=>'<option value="'+esc(job.id)+'">'+esc(job.filename||'Tệp ngân hàng')+' · '+esc(statuses[job.status])+' · '+job.progress+' dòng</option>').join(''):'<option value="">Chưa có tệp làm việc</option>';$('jobFilter').value=activeJob||'';if(previous!==activeJob&&!viewCleared){offset=0;resultRequestId++;selectedIds.clear()}setExportLinks();const active=jobItems.filter(job=>['queued','running','cancelling'].includes(job.status));$('taskCount').classList.toggle('hidden',!active.length);$('taskCount').textContent=active.length;$('jobs').innerHTML=jobItems.length?jobItems.map(job=>{const running=['queued','running','cancelling'].includes(job.status),file=job.kind==='batch_classify';return '<div class="job"><div class="jobtop"><div><b>'+esc(job.filename||kinds[job.kind]||'Tác vụ')+'</b><div class="rowmeta">'+esc(kinds[job.kind]||'Xử lý')+' · '+esc(job.created_at?.slice(0,16).replace('T',' ')||'')+'</div></div><span class="pill '+esc(job.status)+'">'+esc(statuses[job.status]||job.status)+(job.status==='completed'&&job.summary?.row_error_count?' · có dòng lỗi':'')+'</span></div>'+(running?'<div class="jobprogress"><span></span></div>':'')+'<div class="hint">Đã xử lý '+job.progress.toLocaleString('vi-VN')+' dòng'+(job.summary?.counts?.learned!=null?' · '+job.summary.counts.learned+' dòng được học':'')+'</div>'+jobStage(job)+sheetSummary(job)+rowErrorSummary(job)+(job.error?'<div class="joberror">'+esc(viError(job.error))+'</div>':'')+'<div class="buttons">'+(running?'<button class="small danger" data-stop-job="'+esc(job.id)+'" '+(job.status==='cancelling'?'disabled':'')+'>Dừng xử lý</button>':'')+(file&&job.progress?'<button class="small" data-view-job="'+esc(job.id)+'">Xem kết quả</button><a class="button small" href="/export/'+esc(job.id)+'/results.xlsx">Tải Excel</a><a class="button small" href="/export/'+esc(job.id)+'/csv.zip">CSV theo sheet (ZIP)</a>':'')+(!running?'<button class="small danger" data-delete-job="'+esc(job.id)+'">Xóa tệp làm việc</button>':'')+'</div></div>'}).join(''):'<div class="empty">Chưa có tệp làm việc. Tải tệp để bắt đầu.</div>';return active.length>0}
+function jobMarkup(job){
+  const running=['queued','running','cancelling'].includes(job.status),file=job.kind==='batch_classify';
+  return '<div class="job" data-job-key="job:'+esc(job.id)+'"><div class="jobtop" data-job-key="header"><div><b>'+esc(job.filename||kinds[job.kind]||'Tác vụ')+'</b><div class="rowmeta">'+esc(kinds[job.kind]||'Xử lý')+' · '+esc(job.created_at?.slice(0,16).replace('T',' ')||'')+'</div></div><span class="pill '+esc(job.status)+'">'+esc(statuses[job.status]||job.status)+(job.status==='completed'&&job.summary?.row_error_count?' · có dòng lỗi':'')+'</span></div>'+
+    (running?'<div class="jobprogress" data-job-key="progress"><span></span></div>':'')+
+    '<div class="hint" data-job-key="count">Đã xử lý '+job.progress.toLocaleString('vi-VN')+' dòng'+(job.summary?.counts?.learned!=null?' · '+job.summary.counts.learned+' dòng được học':'')+'</div>'+jobStage(job)+sheetSummary(job)+rowErrorSummary(job)+
+    (job.error?'<div class="joberror" data-job-key="error">'+esc(viError(job.error))+'</div>':'')+
+    '<div class="buttons" data-job-key="actions">'+
+    (running?'<button class="small danger" data-job-key="stop" data-stop-job="'+esc(job.id)+'" data-stopping="'+String(job.status==='cancelling')+'" '+(job.status==='cancelling'?'disabled':'')+'>Dừng xử lý</button>':'')+
+    (file&&job.progress?'<button class="small" data-job-key="view" data-view-job="'+esc(job.id)+'">Xem kết quả</button><a class="button small" data-job-key="xlsx" href="/export/'+esc(job.id)+'/results.xlsx">Tải Excel</a><a class="button small" data-job-key="csv" href="/export/'+esc(job.id)+'/csv.zip">CSV theo sheet (ZIP)</a>':'')+
+    (!running?'<button class="small danger" data-job-key="delete" data-delete-job="'+esc(job.id)+'">Xóa tệp làm việc</button>':'')+'</div></div>';
+}
+async function jobs(){
+  const requestId=++jobsRequestId,items=(await api('/jobs')).filter(job=>job.kind!=='benchmark');
+  // A slower response must not overwrite a newer refresh or a stop/delete result.
+  if(requestId!==jobsRequestId)return true;
+  jobItems=items;
+  const imports=jobItems.find(job=>job.kind==='knowledge_import'&&['queued','running','cancelling'].includes(job.status));
+  activeImportId=imports?.id||null;
+  $('stopImportButton').classList.toggle('hidden',!imports);
+  $('stopImportButton').dataset.stopping=String(imports?.status==='cancelling');
+  $('stopImportButton').disabled=pendingActions.has($('stopImportButton'))||imports?.status==='cancelling';
+  const stopLabel=imports?.status==='cancelling'?'Đang dừng…':'Dừng nhập';
+  if($('stopImportButton').textContent!==stopLabel)$('stopImportButton').textContent=stopLabel;
+  const files=jobItems.filter(job=>job.kind==='batch_classify'),previous=activeJob;
+  if(!files.some(job=>job.id===activeJob))activeJob=files[0]?.id||null;
+  const options=files.length?files.map(job=>'<option value="'+esc(job.id)+'">'+esc(job.filename||'Tệp ngân hàng')+' · '+esc(statuses[job.status])+' · '+job.progress+' dòng</option>').join(''):'<option value="">Chưa có tệp làm việc</option>';
+  updateSelectOptions($('jobFilter'),options,()=>activeJob||'');
+  if(previous!==activeJob&&!viewCleared){offset=0;resultRequestId++;selectedIds.clear()}
+  setExportLinks();
+  const active=jobItems.filter(job=>['queued','running','cancelling'].includes(job.status));
+  $('taskCount').classList.toggle('hidden',!active.length);$('taskCount').textContent=active.length;
+  renderJobs(jobItems.length?jobItems.map(jobMarkup).join(''):'<div class="empty">Chưa có tệp làm việc. Tải tệp để bắt đầu.</div>');
+  return active.length>0;
+}
 async function stopJob(id){if(!id)return;const result=await post('/jobs/'+encodeURIComponent(id)+'/cancel',{});toast(result.status==='cancelling'?'Đang dừng xử lý. Phần đã hoàn tất được giữ.':result.status==='cancelled'?'Đã dừng tác vụ.':'Tác vụ đã kết thúc.');await jobs();if(dbReady)await refresh()}
 async function pollJobs(){if(polling)return;polling=true;try{let active=true;while(active){active=await jobs();if(dbReady)await refresh();if(active)await new Promise(resolve=>setTimeout(resolve,2000))}}catch(error){toast(error.message,true)}finally{polling=false}}
 async function queued(result,classifying=false){if(classifying){activeJob=result.job_id;showResults();selectTab('workspace')}await jobs();toast(classifying?'Đã nhận tệp đối soát. Kết quả xuất hiện theo từng đợt.':'Đã nhận tệp học. Theo dõi tại Tác vụ xử lý.');if(dbReady)await refresh();pollJobs()}
