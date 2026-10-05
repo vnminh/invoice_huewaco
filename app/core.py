@@ -16,9 +16,13 @@ from .normalize import fold, normalize_text, identity_signature, branch_markers,
 from .numeric_match import compare_ordered_numbers
 from .name_extraction import name_fields, name_key, structured_name_fields
 from .retrieval import CHANNEL_LABELS, fuse_rankings
-from .payment_templates import payment_hint, payment_route, shared_key, shared_shape
+from .payment_templates import (collection_channel, payment_hint, payment_route, shared_key, shared_shape,
+                                unique_transfer_reference)
+from .id_slots import BATCH_MIN_CUSTOMERS, SlotCache
 
 WEIGHTS = {'customer': .30, 'payer': .10, 'text': .20, 'structure': .15, 'number': .15, 'history': .10}
+# Number roles a confirmed label may re-identify as this customer's ID token.
+CONFIRMABLE_TYPES = {'UNKNOWN_NUMBER', 'INVOICE_ID', 'CONTRACT_ID', 'REFERENCE_ID', 'LOCATION_NUMBER'}
 STOPWORDS = set('rem tfr ac o l tt tien nuoc thoi gian gd thanh toan chuyen khoan the tai va cua cho tu den vnd cty cong ty co phan'.split())
 STOPWORDS.update('hue bidv ngan hang dau phat trien viet nam bank charge vat dtls ref tkthe bftvvnvx icbvvnvx'.split())
 
@@ -51,6 +55,9 @@ def vietnamese_reason(reason):
         'Unmatched confirmed customer number requires manual check': 'Số từng được xác nhận là mã khách hàng bị thiếu, đổi giá trị hoặc đổi vị trí so với mẫu lịch sử; cần kiểm tra thủ công.',
         'Shared or proxy template requires exact customer-specific numeric evidence': 'Mẫu thu hộ hoặc mẫu giao dịch chưa có mã/số riêng đủ tin cậy để xác định khách hàng; cần kiểm tra thủ công.',
         'Unknown payment route requires exact customer-specific numeric evidence': 'Chưa xác định được kiểu thanh toán và chưa có mã/số riêng đủ tin cậy của khách hàng; cần kiểm tra thủ công.',
+        'Provider batch settlement covers many customers; reconcile with the provider statement': 'Khoản quyết toán tổng hợp của đơn vị thu hộ (ví/ngân hàng), gồm nhiều khách hàng trong một lần chuyển.',
+        'Explicit customer ID of a customer confirmed through collection settlements': 'Mã khách hàng ghi rõ, thuộc khách hàng đã xác nhận qua bảng kê thu hộ; nội dung là thanh toán tiền nước, không có mã mâu thuẫn.',
+        'Explicit customer ID in a learned position plus matching payment purpose': 'Mã khách hàng nằm ở vị trí đã học từ dữ liệu xác nhận (đúng bố cục ngân hàng/kênh), trùng khách hàng trong kho; nội dung là thanh toán tiền nước.',
     }
     suffix = '; competing customer requires human review'
     base = reason.removesuffix(suffix)
@@ -126,9 +133,72 @@ class Core:
         if extractor is not None and getattr(extractor, 'provider', 'rules') != 'rules':
             raise ValueError('Local LLM extraction is disabled; use semantic embeddings with deterministic identifiers')
         self.extractor = RuleExtractor()
+        self.slots = SlotCache()
 
     def normalize(self, raw):
         return self.extractor.augment(normalize_text(raw))
+
+    def apply_learned_slots(self, session, norm):
+        """Add customer IDs found in learned ID positions; mark learned non-ID positions.
+
+        Rule-labelled IDs stay first. A learned non-ID number (amount, reference) is excluded
+        from identity ownership checks, so a coincidence with another customer's ID cannot
+        block or mislead a match.
+        """
+        kinds = self.slots.kinds_for(session)
+        known = {id_key(value) for value in norm.customer_ids}
+        learned = []
+        for number in norm.numbers:
+            kind = kinds.get(number.get('context'))
+            if kind == 'not_id':
+                number['learned_non_id'] = True
+            elif kind == 'id' and number['numeric_type'] != 'CUSTOMER_ID':
+                number['learned_customer_id'] = True
+                if id_key(number['value']) not in known:
+                    known.add(id_key(number['value']))
+                    learned.append(number['value'])
+        if learned:
+            norm.customer_ids = sorted(set(norm.customer_ids) | set(learned))
+            norm.extraction = {**(norm.extraction or {}), 'status': 'learned_id_slot' if norm.extraction.get('status') != 'explicit_id' else 'explicit_id',
+                               'learned_customer_ids': sorted(learned)}
+        return learned
+
+    def batch_settlement(self, session, norm, names):
+        """A layout whose single transfers were split across many confirmed customers.
+
+        Such a credit (MoMo/Payoo/Viettel... daily settlement) pays for hundreds of bills; the
+        text cannot name one customer, so it is reported as a provider batch, never guessed.
+        """
+        if not unique_transfer_reference(norm):
+            return None
+        template = session.scalar(select(PaymentTemplate).where(
+            PaymentTemplate.fingerprint == shared_key(shared_shape(norm, names), norm.structure)))
+        if template is None or (template.max_transfer_customers or 1) < BATCH_MIN_CUSTOMERS:
+            return None
+        if template.payment_mode != 'proxy' and not template.settlement_rows:
+            return None  # an organisation's multi-meter transfer, not a collection-service settlement
+        customers = (template.settlement_rows or 0) + session.scalar(
+            select(func.count(func.distinct(Pattern.customer_id))).where(Pattern.template_id == template.id))
+        name, kind = template.provider_name, template.provider_kind
+        if not name:
+            labelled = session.execute(select(Pattern.provider_name, Pattern.provider_kind, func.count().label('n'))
+                .where(Pattern.template_id == template.id, Pattern.provider_name != '')
+                .group_by(Pattern.provider_name, Pattern.provider_kind).order_by(text('n DESC')).limit(1)).first()
+            if labelled:
+                name, kind = labelled[0], labelled[1]
+        if not name:
+            channel = session.execute(select(Payer.payer_name, func.count().label('n')).join(Pattern, Pattern.payer_id == Payer.id)
+                .where(Pattern.template_id == template.id).group_by(Payer.payer_name).order_by(text('n DESC')).limit(1)).first()
+            name = channel[0] if channel else ''
+            kind = collection_channel(name) or kind
+        return {'template_id': template.id, 'shared_template': template.template_text,
+                'max_transfer_customers': template.max_transfer_customers, 'customer_count': customers,
+                'provider_name': name or '', 'provider_kind': kind if kind in ('bank', 'wallet', 'other') else 'unknown'}
+
+    @staticmethod
+    def bound_candidates(norm):
+        return {n['value'] for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER'
+                and not n.get('learned_non_id') and not n.get('learned_customer_id')}
 
     def prepare_batch(self, raws):
         self.embedder.prepare([self.normalize(raw).semantic_text for raw in raws])
@@ -231,14 +301,11 @@ class Core:
         if transaction.label_status in ('skipped', 'unresolved'):
             return False
         norm = self.normalize(transaction.raw)
-        chosen_key = id_key(str(customer_id).strip())
         detected_keys = {id_key(value) for value in norm.customer_ids}
-        if detected_keys and chosen_key not in detected_keys:
-            raise ValueError('Mã khách hàng được xác nhận không có trong các mã khách hàng ghi rõ trong nội dung. '
-                             'Kiểm tra lại mã xác nhận hoặc nội dung của dòng này trước khi học.')
-        # A single transfer may pay for several customers. Each confirmed label
-        # gets its own link, full ordered numbers and receipt; other mentioned
-        # IDs are not automatically confirmed or assigned to this customer.
+        # Confirmed labels are trusted even when the payer wrote another/mistyped ID or the
+        # rules misread one: the label is stored as this customer's link, and the other
+        # mentioned IDs are never assigned to it. A single transfer may pay for several
+        # customers; each confirmed label gets its own link, ordered numbers and receipt.
         multiple_customers = len(detected_keys) > 1
         # A water contract may be shared by several confirmed customer IDs.
         # Keep each customer's values/link separately; the explicit ID guard above still applies.
@@ -253,7 +320,9 @@ class Core:
             # name of any individual recipient. Explicitly confirmed names still apply.
             self.learn_names(session, customer, transaction.raw)
         for number in norm.numbers:
-            if number['numeric_type'] == 'UNKNOWN_NUMBER' and number['value'].isdigit() and id_key(number['value']) == id_key(customer.id):
+            # The label tells which number is the customer ID, whatever role the rules guessed
+            # (e.g. AB bank writes the IDKH after "ma hoa don").
+            if number['numeric_type'] in CONFIRMABLE_TYPES and number['value'].isdigit() and id_key(number['value']) == id_key(customer.id):
                 number['confirmed_customer_value'] = True
                 next(s for s in norm.segments if s.get('slot') == number['slot'])['confirmed_customer_value'] = True
         period = period_of(transaction.date)
@@ -290,6 +359,9 @@ class Core:
         route = payment_route(transaction.raw, transaction.payment_mode, transaction.provider_kind, transaction.provider_name)
         if not transaction.payment_mode and template.payment_mode != 'unknown':
             route = {key: getattr(template, key) for key in ('payment_mode', 'provider_kind', 'provider_name')}
+        elif not transaction.payment_mode and (channel_kind := collection_channel(transaction.payer)):
+            # The confirmed file names the collection channel (MoMo, Payoo, ...): a real label.
+            route = {'payment_mode': 'proxy', 'provider_kind': channel_kind, 'provider_name': transaction.payer}
         if pattern is not None:
             session.execute(delete(Posting).where(Posting.pattern_id == pattern.id,
                 Posting.token.startswith('template:'), Posting.token != 'template:' + template.fingerprint))
@@ -393,6 +465,42 @@ class Core:
         existing = set(session.scalars(select(Posting.token).where(Posting.pattern_id == pattern.id, posting_in(tokens))))
         session.add_all([Posting(token=token, pattern_id=pattern.id, weight=weight)
                          for token, weight in tokens.items() if token not in existing])
+        if unique_transfer_reference(norm):
+            # Same narrative with a per-transfer reference = one bank credit split across customers.
+            exact = 'exact:' + fingerprint(norm.normalized)
+            split = len(posting_owners(session, {exact})[exact])
+            if split > (template.max_transfer_customers or 1):
+                template.max_transfer_customers = split
+        return True
+
+    def learn_settlement(self, session, transaction, customer_id, customer_name, split, receipt_key=None):
+        """Compact learning for one customer row of a provider batch settlement.
+
+        The shared settlement text never identifies a customer, so no per-customer pattern,
+        vector, numbers or postings are stored (they could only ever be guarded to manual).
+        Kept: the confirmed customer and name, the receipt, and layout statistics that let
+        matching report the next settlement of this provider as a batch.
+        """
+        if transaction.label_status in ('skipped', 'unresolved'):
+            return False
+        self.check_model(session, writing=True)
+        receipt = fingerprint(receipt_key or '|'.join([transaction.raw, str(customer_id), transaction.date,
+                                                        str(transaction.amount), str(transaction.row_index)]))
+        if session.scalar(select(KnowledgeReceipt.id).where(KnowledgeReceipt.fingerprint == receipt)):
+            return False
+        customer = self.ensure_customer(session, customer_id, customer_name)
+        session.add(KnowledgeReceipt(fingerprint=receipt, customer_id=customer.id, period=period_of(transaction.date)))
+        norm = self.normalize(transaction.raw)
+        template = self.ensure_template(session, norm, [customer.canonical_name, customer_name])
+        template.max_transfer_customers = max(template.max_transfer_customers or 1, split)
+        if template.payment_mode == 'unknown' and not transaction.payment_mode:
+            if channel_kind := collection_channel(transaction.payer):
+                template.payment_mode, template.provider_kind, template.provider_name = 'proxy', channel_kind, transaction.payer
+        elif transaction.payment_mode and template.payment_mode == 'unknown':
+            route = payment_route(transaction.raw, transaction.payment_mode, transaction.provider_kind, transaction.provider_name)
+            template.payment_mode, template.provider_kind, template.provider_name = (
+                route['payment_mode'], route['provider_kind'], route['provider_name'])
+        template.settlement_rows = (template.settlement_rows or 0) + 1
         return True
 
     def retrieve(self, session, norm, vector, payer, *, customer_scope=None, with_trace=False, extracted_names=None):
@@ -455,7 +563,7 @@ class Core:
                     Pattern.id.in_(literal_ids).desc(), Pattern.last_seen.desc(), Pattern.id.desc()).limit(source_limit)))
         postings_channel('exact_text', {'exact:' + fingerprint(norm.normalized)})
         identifying = {'contract:' + value for value in norm.contract_ids}
-        identifying.update('bound-id:' + n['value'] for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER')
+        identifying.update('bound-id:' + value for value in self.bound_candidates(norm))
         postings_channel('identity', identifying)
         structured = {'code:' + value for value in norm.mixed_codes}
         signature = identity_signature(norm.raw)
@@ -521,6 +629,7 @@ class Core:
     def classify(self, session, raw, payer='BIDV', *, payment_mode='', provider_kind='', provider_name=''):
         self.check_model(session)
         norm = self.normalize(raw)
+        learned_ids = self.apply_learned_slots(session, norm)
         extracted = self.extract_names(raw)
         route_evidence = {**payment_hint(raw), 'source': 'input_label' if payment_mode else 'unresolved'}
         route = payment_route(raw, payment_mode, provider_kind, provider_name)
@@ -529,26 +638,73 @@ class Core:
                 if route['payment_mode'] != 'unknown' else 'Dữ liệu nguồn đánh dấu kiểu thanh toán là Chưa xác định.')
         # Changing thresholds must never let contradictory identifiers pass.
         guard_cap = min(.59, max(0, self.review_threshold - .01))
-        def manual(reason, **evidence):
+        def manual(reason, detail_vi='', suggested_customer_id=None, **evidence):
             return {'customer_id': None, 'customer_name': None, 'score': 0.0, 'decision': 'manual_check',
-                    'evidence': {'reason': reason, 'reason_vi': vietnamese_reason(reason), 'candidate_count': 0, 'unknown_customer': True,
-                                 'detected_customer_ids': norm.customer_ids, **evidence},
+                    'suggested_customer_id': suggested_customer_id,
+                    'evidence': {'reason': reason, 'reason_vi': (vietnamese_reason(reason) + (' ' + detail_vi if detail_vi else '')).strip(),
+                                 'candidate_count': 0, 'unknown_customer': True,
+                                 'detected_customer_ids': norm.customer_ids, 'learned_customer_ids': learned_ids, **evidence},
                     'normalization': norm.dict(), 'alternatives': [], **extracted, **route,
                     'payment_mode_evidence': route_evidence}
-        if len({id_key(value) for value in norm.customer_ids}) > 1:
-            return manual('Multiple customer IDs require manual allocation', multiple_customer_ids=True)
+        distinct_ids = {id_key(value): value for value in norm.customer_ids}
+        if len(distinct_ids) > 1:
+            # One transfer for several customers: propose the allocation, never pick one or split money.
+            owners = posting_owners(session, {'id:' + key for key in distinct_ids})
+            allocation, unknown_ids = [], []
+            for key, value in distinct_ids.items():
+                found = owners['id:' + key]
+                (allocation.append(next(iter(found))) if len(found) == 1 else unknown_ids.append(value))
+            names = dict(session.execute(select(Customer.id, Customer.canonical_name).where(Customer.id.in_(allocation))).all()) if allocation else {}
+            listed = ', '.join(f'{cid} ({names.get(cid, "")})' for cid in allocation)
+            detail = (f'Đề xuất phân bổ cho {len(allocation)} khách hàng đã biết: {listed}.' if allocation else '') + \
+                     (f' Mã chưa có trong kho: {", ".join(unknown_ids)}.' if unknown_ids else '')
+            return manual('Multiple customer IDs require manual allocation', detail.strip(), multiple_customer_ids=True,
+                          allocation_customer_ids=allocation, unknown_allocation_ids=unknown_ids,
+                          allocation=[{'customer_id': cid, 'customer_name': names.get(cid, '')} for cid in allocation],
+                          allocation_complete=bool(allocation) and not unknown_ids)
+        if not norm.customer_ids:
+            batch = self.batch_settlement(session, norm, extracted['extracted_names'])
+            if batch:
+                provider = batch['provider_name'] or 'đơn vị thu hộ'
+                batch_route = {'payment_mode': 'proxy', 'provider_kind': batch['provider_kind'], 'provider_name': batch['provider_name']}
+                route_evidence.update(source='batch_settlement', suggested_mode='proxy',
+                                      reason_vi=f'Bố cục quyết toán tổng hợp của {provider}; lịch sử có một lần chuyển chia cho {batch["max_transfer_customers"]} khách hàng.')
+                result = manual('Provider batch settlement covers many customers; reconcile with the provider statement',
+                                f'Một lần chuyển của {provider} từng gồm {batch["max_transfer_customers"]} khách hàng '
+                                f'({batch["customer_count"]} lượt khách hàng đã học với bố cục này). Đối chiếu bảng kê của {provider}; không gán cho một khách hàng.',
+                                batch_settlement=batch)
+                if not payment_mode:
+                    result.update(batch_route)
+                return result
         id_tokens = {'id:' + id_key(value) for value in norm.customer_ids}
-        bound_values = {n['value'] for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER'}
+        bound_values = self.bound_candidates(norm)
         mixed_values = {n['value'] for n in norm.numbers if n['numeric_type'] == 'MIXED_CODE'
                         and len(n['value']) >= 6 and sum(c.isdigit() for c in n['value']) >= 4}
         identity_tokens = id_tokens | {'contract:' + value for value in norm.contract_ids} | \
             {'bound-id:' + value for value in bound_values} | {'code:' + value for value in mixed_values}
         identity_owners = posting_owners(session, identity_tokens)
         customer_scope = None
+        registry_customer = None
+        # The receiving company's name contains "nước" even on unrelated transfers.
+        water_intent = bool(re.search(r'\b(?:tien\s+nuoc|nuoc\s+(?:sinh|sach|may)|water|phi\s+nuoc|cp\s+nuoc)\b', fold(raw)))
         if norm.customer_ids:
             known_customers = set().union(*(identity_owners[token] for token in id_tokens))
             if not known_customers:
-                return manual('Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required')
+                value = norm.customer_ids[0]
+                source = 'vị trí mã khách hàng đã học từ dữ liệu xác nhận' if learned_ids else 'nhãn mã khách hàng trong nội dung'
+                # Customers learned only from batch settlements have a confirmed name but no own pattern.
+                registered = next((c for c in (session.get(Customer, v) for v in dict.fromkeys(
+                    (value, value.lstrip('0') or '0', value.zfill(6)))) if c), None)
+                if registered is not None and water_intent:
+                    known_customers = {registered.id}
+                    registry_customer = registered
+            if registry_customer is None and not known_customers:
+                detail = (f'Mã đề xuất {value} – {registered.canonical_name} (có trong danh sách khách hàng, chưa có mẫu chuyển khoản riêng; đọc từ {source}).'
+                          if registered else f'Mã đề xuất {value} (đọc từ {source}); kiểm tra rồi xác nhận để học khách hàng mới.')
+                return manual('Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required', detail,
+                              suggested_customer_id=registered.id if registered else value,
+                              suggested_customer_name=registered.canonical_name if registered else '',
+                              customer_id_source='learned_slot' if learned_ids else 'rule')
             if len(known_customers) > 1:
                 return manual('Customer ID maps to multiple confirmed profiles; manual check required',
                               unknown_customer=False, conflicting_customer_ids=sorted(known_customers))
@@ -579,6 +735,22 @@ class Core:
         candidates, retrieval_trace = self.retrieve(session, norm, vector, payer,
                                                   customer_scope=customer_scope, with_trace=True,
                                                   extracted_names=extracted['extracted_names'])
+        if not candidates and registry_customer is not None:
+            # Confirmed only through collection-service settlements (stored compactly, no own
+            # pattern): an explicit ID of this confirmed customer with a water-bill purpose, and
+            # no conflicting identifier, is the same evidence a stored pattern would have given.
+            if compatible_owners is None or registry_customer.id in compatible_owners:
+                reason = 'Explicit customer ID of a customer confirmed through collection settlements'
+                return {'customer_id': registry_customer.id, 'customer_name': registry_customer.canonical_name,
+                        'score': .92, 'decision': 'auto_accept' if .92 >= self.auto_threshold else 'review',
+                        'evidence': {'reason': reason, 'reason_vi': vietnamese_reason(reason), 'explicit_customer_id': True,
+                                     'customer_id_source': 'learned_slot' if learned_ids else 'rule', 'learned_customer_ids': learned_ids,
+                                     'registry_only_customer': True, 'candidate_count': 0, 'identifier_guards': [],
+                                     'confirmed_identifier_owners': ownership_evidence, 'retrieval': retrieval_trace,
+                                     'match_steps_vi': ['Mã khách hàng ' + registry_customer.id + ' có trong danh sách đã xác nhận (qua bảng kê thu hộ).',
+                                                        'Nội dung là thanh toán tiền nước; không có mã định danh mâu thuẫn.']},
+                        'normalization': norm.dict(), 'alternatives': [], **extracted, **route,
+                        'payment_mode_evidence': route_evidence}
         if not candidates:
             return manual('No confirmed customer evidence; confidence is 0%; manual check required', retrieval=retrieval_trace)
         customer_ids = {p.customer_id for p in candidates}
@@ -685,7 +857,9 @@ class Core:
             water_intent = bool(re.search(r'\b(?:tien\s+nuoc|nuoc\s+(?:sinh|sach|may)|water|phi\s+nuoc|cp\s+nuoc)\b', fold(raw)))
             if exact_id and (text_score >= .75 or water_intent):
                 score = max(score, .92 + .06 * text_score)
-                reason = 'Explicit customer ID plus matching confirmed transfer template'
+                reason = ('Explicit customer ID in a learned position plus matching payment purpose'
+                          if any(id_key(v) == id_key(customer.id) for v in learned_ids) else
+                          'Explicit customer ID plus matching confirmed transfer template')
             elif unique_contract and water_intent:
                 score = max(score, .96)
                 reason = 'Exact water contract and ordered template evidence'
@@ -830,7 +1004,14 @@ class Core:
                              'Conflicting confirmed identifiers require manual check'}
             manual_reason = best['evidence']['reason'] if best['evidence']['reason'] in guard_reasons else \
                 'Historical candidates do not identify this customer reliably; confidence is 0%; manual check required'
+            # Recurring split payments (e.g. one agency paying several meters every month):
+            # the same payment details were confirmed for a small group of customers.
+            group = sorted(detail_owners) if not norm.customer_ids and 2 <= len(detail_owners) < BATCH_MIN_CUSTOMERS else []
+            group_names = dict(session.execute(select(Customer.id, Customer.canonical_name).where(Customer.id.in_(group))).all()) if group else {}
             return manual(manual_reason,
+                          ('Lịch sử: cùng nội dung thanh toán đã được xác nhận cho ' +
+                           ', '.join(f'{cid} ({group_names.get(cid, "")})' for cid in group) + '.') if group else '',
+                          history_allocation_customer_ids=group,
                           candidate_count=len(candidates),
                           retrieval=best['evidence']['retrieval'],
                           confirmed_identifier_owners=ownership_evidence,
@@ -868,6 +1049,18 @@ class Core:
         chosen = (correct_customer_id or record.get('customer_id')) if accepted else None
         if accepted and not chosen:
             raise ValueError('Choose a customer before accepting')
+        allocation = list(dict.fromkeys(value for value in re.split(r'[\s,;]+', str(chosen or '')) if value))
+        if accepted and len(allocation) > 1:
+            # One transfer paying several customers: learn one confirmed link per customer.
+            missing = [cid for cid in allocation if not session.get(Customer, cid) and not session.scalar(
+                select(Pattern.id).join(Posting).where(posting_equal('id:' + id_key(cid))).limit(1))]
+            if missing:
+                raise ValueError('Mã chưa có trong kho: ' + ', '.join(missing) + '. Xác nhận riêng từng khách hàng mới kèm tên.')
+            results = [self.review(session, {**record, 'customer_id': None}, True, cid, '',
+                                   payment_mode, provider_kind, provider_name) for cid in allocation]
+            return {**results[-1], 'confirmed_customer_id': ', '.join(r['confirmed_customer_id'] for r in results),
+                    'confirmed_customer_name': '; '.join(r['confirmed_customer_name'] for r in results),
+                    'confirmed_customer_ids': [r['confirmed_customer_id'] for r in results]}
         if accepted:
             if not customer_name.strip() and not session.get(Customer, str(chosen).strip()):
                 existing = session.scalar(select(Pattern.id).join(Posting).where(posting_equal('id:' + id_key(chosen))).limit(1))

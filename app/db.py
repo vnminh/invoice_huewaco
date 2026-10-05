@@ -92,6 +92,11 @@ class PaymentTemplate(Base):
     provider_kind: Mapped[str] = mapped_column(String(16), default='unknown')
     provider_name: Mapped[str] = mapped_column(Text, default='')
     created_at: Mapped[str] = mapped_column(String(40), default=now)
+    # Most confirmed customers ever allocated from ONE transfer (same narrative and unique
+    # bank reference) of this layout. Large values identify provider batch settlements.
+    max_transfer_customers: Mapped[int] = mapped_column(Integer, default=1)
+    # Confirmed customer rows of batch settlements learned compactly (no per-customer pattern).
+    settlement_rows: Mapped[int] = mapped_column(Integer, default=0)
     __table_args__ = (
         CheckConstraint("payment_mode IN ('unknown', 'proxy', 'self')", name='ck_templates_payment_mode'),
         CheckConstraint("provider_kind IN ('unknown', 'bank', 'wallet', 'other')", name='ck_templates_provider_kind'))
@@ -173,6 +178,18 @@ class HardNegative(Base):
     pattern_id: Mapped[int | None] = mapped_column(ForeignKey('transaction_patterns.id'), nullable=True)
     count: Mapped[int] = mapped_column(Integer, default=1)
     __table_args__ = (UniqueConstraint('transaction_fingerprint', 'customer_id'),)
+
+
+class IdSlotStat(Base):
+    """Learned from confirmed narratives: how often a number in this local layout is the customer ID."""
+    __tablename__ = 'customer_id_slots'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    context: Mapped[str] = mapped_column(Text, unique=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    example: Mapped[str] = mapped_column(Text, default='')
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+    __table_args__ = (CheckConstraint('hits >= 0 AND hits <= total', name='ck_id_slots_counts'),)
 
 
 class Metadata(Base):

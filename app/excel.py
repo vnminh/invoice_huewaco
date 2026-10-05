@@ -147,27 +147,27 @@ HEADER_ALIASES = {
 }
 
 STANDARD_LAYOUTS = {
-    'raw': {'title': 'Bố cục chuẩn cho đối soát', 'columns': [
-        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản: dd/mm/yyyy HH:MM:SS hoặc yyyy-mm-dd. Không phải kỳ hóa đơn.', 'required': True},
-        {'key': 'NOIDUNG', 'description': 'Giữ nguyên toàn bộ nội dung chuyển tiền, cả chữ và số.', 'required': True},
-        {'key': 'GHICO', 'description': 'Số tiền nhận vào, không âm. Dùng ô số hoặc chuỗi số; để trống/0 nếu chỉ ghi nợ.', 'required': True},
-        {'key': 'GHINO', 'description': 'Số tiền chuyển ra, không âm. Để trống/0 nếu chỉ ghi có.', 'required': False},
-        {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng. Định dạng Text để giữ số 0 đầu và mã dài.', 'required': False},
-        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh giao dịch; để trống thì dùng tên sheet.', 'required': False},
-        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = thu hộ; self = tự trả; unknown = chưa xác định. Có thể để trống.', 'required': False},
-        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown; chỉ mô tả đơn vị thu hộ.', 'required': False},
-        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra; không phải mã khách hàng.', 'required': False}]},
-    'confirmed': {'title': 'Bố cục chuẩn cho học dữ liệu đã xác nhận', 'columns': [
-        {'key': 'IDKH', 'description': 'Mã khách hàng đã kiểm tra; định dạng Text để giữ đủ số và số 0 đầu. Nhãn ko được bỏ qua.', 'required': True},
-        {'key': 'TENKH', 'description': 'Tên khách hàng đã kiểm tra. Có thể để trống khi bổ sung mẫu cho hồ sơ đã có.', 'required': False},
-        {'key': 'NOIDUNG', 'description': 'Nội dung chuyển tiền nguyên văn, thuộc đúng khách hàng đã xác nhận.', 'required': True},
-        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản: dd/mm/yyyy HH:MM:SS hoặc yyyy-mm-dd.', 'required': False},
-        {'key': 'SOTIEN', 'description': 'Số tiền thanh toán không âm, để trống thì 0.', 'required': False},
-        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh trả tiền; để trống thì dùng tên sheet.', 'required': False},
-        {'key': 'REFERENCE', 'description': 'Tham chiếu ngân hàng, định dạng Text.', 'required': False},
-        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = thu hộ; self = tự trả; unknown = chưa xác định. Trống thì dùng loại của mẫu đã xác nhận nếu có.', 'required': False},
-        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False},
-        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví/dịch vụ thu hộ đã kiểm tra.', 'required': False}]},
+    'raw': {'title': 'Bố cục tệp đối soát', 'columns': [
+        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản.', 'aliases': 'Ngày giao dịch, Ngày hiệu lực', 'required': True},
+        {'key': 'NOIDUNG', 'description': 'Nội dung chuyển tiền, giữ nguyên.', 'aliases': 'Mô tả, Diễn giải', 'required': True},
+        {'key': 'GHICO', 'description': 'Số tiền nhận vào.', 'aliases': 'Số tiền ghi có, Credit', 'required': True},
+        {'key': 'GHINO', 'description': 'Số tiền chuyển ra; trống nếu không có.', 'aliases': 'Số tiền ghi nợ, Debit', 'required': False},
+        {'key': 'REFERENCE', 'description': 'Số tham chiếu (định dạng Text).', 'aliases': 'Số tham chiếu, Số GD', 'required': False},
+        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh; trống thì dùng tên sheet.', 'aliases': 'Kênh thanh toán', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy = thu hộ, self = tự trả, unknown.', 'required': False, 'optional_group': 'payment'},
+        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False, 'optional_group': 'payment'},
+        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví thu hộ.', 'required': False, 'optional_group': 'payment'}]},
+    'confirmed': {'title': 'Bố cục tệp học dữ liệu', 'columns': [
+        {'key': 'IDKH', 'description': 'Mã khách hàng đã kiểm tra (Text, giữ số 0 đầu). ko = bỏ qua.', 'aliases': 'Mã KH, MaKH', 'required': True},
+        {'key': 'NOIDUNG', 'description': 'Nội dung chuyển tiền nguyên văn.', 'aliases': 'EBL, Lệnh gốc ngân hàng', 'required': True},
+        {'key': 'TENKH', 'description': 'Tên khách hàng; có thể trống.', 'aliases': 'Đơn vị chuyển tiền', 'required': False},
+        {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản.', 'aliases': 'Ngày chuyển NH', 'required': False},
+        {'key': 'SOTIEN', 'description': 'Số tiền của khách hàng này.', 'aliases': 'Số tiền', 'required': False},
+        {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh (MoMo, Payoo… = thu hộ).', 'aliases': 'Ngân hàng', 'required': False},
+        {'key': 'REFERENCE', 'description': 'Số tham chiếu (Text).', 'required': False},
+        {'key': 'KIEUTHANHTOAN', 'description': 'proxy, self hoặc unknown; trống = theo kênh/mẫu.', 'required': False, 'optional_group': 'payment'},
+        {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False, 'optional_group': 'payment'},
+        {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví thu hộ.', 'required': False, 'optional_group': 'payment'}]},
 }
 
 
@@ -303,7 +303,7 @@ class ConfirmedCsv:
         customer_id = (record.get('IDKH') or '').strip()
         status = label_status(customer_id, record.get('TENKH'))
         if status in ('skipped', 'unresolved'):
-            return ExcelTransaction(row_index, '', customer_id=customer_id,
+            return ExcelTransaction(row_index, (record.get('NOIDUNG') or '')[:32767], customer_id=customer_id,
                 source=self.path.name, sheet=record.get('SHEET') or 'CSV', label_status=status)
         raw = record.get('NOIDUNG') or ''
         if record.get('NOIDUNG_GOC_B64'):
@@ -564,8 +564,9 @@ class StreamingWorkbook:
                 return None
             status = label_status(customer_id, name)
             if status in ('skipped', 'unresolved'):
-                return ExcelTransaction(row_index, '', customer_id=customer_id, source=source,
-                                       sheet=sheet, label_status=status)
+                # Text kept for reconciliation/reporting only; learning ignores these statuses.
+                return ExcelTransaction(row_index, raw[:32767], date=date_text(get('date')), customer_id=customer_id,
+                                       source=source, sheet=sheet, label_status=status)
             if customer_id.startswith('#') or len(customer_id) > 100:
                 raise ValueError('Mã khách hàng chưa hợp lệ hoặc vượt quá 100 ký tự.')
             if len(raw) > 32767:

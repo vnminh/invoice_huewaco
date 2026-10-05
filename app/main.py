@@ -60,7 +60,8 @@ class ClassifyInput(BaseModel):
 class FeedbackInput(BaseModel):
     transaction_id: int = Field(gt=0)
     accepted: bool
-    correct_customer_id: str | None = Field(default=None, min_length=1, max_length=100)
+    # Several IDs separated by commas confirm one transfer for several customers.
+    correct_customer_id: str | None = Field(default=None, min_length=1, max_length=2000)
     customer_name: str = Field(default='', max_length=300)
     payment_mode: Literal['', 'unknown', 'proxy', 'self'] = ''
     provider_kind: Literal['', 'unknown', 'bank', 'wallet', 'other'] = ''

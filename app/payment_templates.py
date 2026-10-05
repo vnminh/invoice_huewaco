@@ -6,6 +6,28 @@ from .normalize import fold
 
 PAYMENT_MODES = ('unknown', 'proxy', 'self')
 PROVIDER_KINDS = ('unknown', 'bank', 'wallet', 'other')
+# Collection channels named in the confirmed learning files ("Ngân hàng" column). These
+# services collect from many customers and settle to the water company on their behalf.
+COLLECTION_CHANNELS = {'momo': 'wallet', 'zalopay': 'wallet', 'viettelpay': 'wallet', 'shopee': 'wallet',
+                       'shopeepay': 'wallet', 'vnpay': 'wallet', 'payoo': 'wallet', 'vnpt': 'other',
+                       'buu dien': 'other'}
+
+
+def collection_channel(payer):
+    """Provider kind for a confirmed collection channel label, or None for banks/unknown."""
+    return COLLECTION_CHANNELS.get(' '.join(re.findall(r'[a-z]+', fold(payer or ''))))
+
+
+def unique_transfer_reference(norm):
+    """True when the narrative carries a per-transfer reference, so identical text means one transfer.
+
+    Generic texts such as "thanh toan tien nuoc thang 7/2026" repeat across separate payers and
+    must not be mistaken for one transfer split across many customers.
+    """
+    return any(n['numeric_type'] == 'BANK_REFERENCE' or
+               (n['numeric_type'] not in ('RECEIVER_ACCOUNT', 'ACCOUNT_ID', 'CARD_ID', 'AMOUNT')
+                and sum(c.isdigit() for c in n['value']) >= 8)
+               for n in norm.numbers)
 
 
 def shared_shape(norm, names=()):

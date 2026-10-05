@@ -7,3 +7,11 @@
 .paymentsummary{margin:14px 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface,#f7fafc);overflow-wrap:anywhere}.paymentsummary p{margin:6px 0 0}
 
 .layoutcsv{white-space:pre;overflow-x:auto;overflow-wrap:normal;font-family:Consolas,monospace}.templatecontrols{align-items:end}.templatecontrols button{white-space:normal;min-width:0}
+
+.casenote{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.casenote.batch{background:#fff4e0;color:#8a5200}
+.casenote.multi{background:#e8f0ff;color:#1d4fa8}
+.casenote.suggest{background:#e9f8ef;color:#17673a}
+.legend p{margin:0 0 10px;font-size:12px;color:var(--muted)}.legend p:last-child{margin:0}.legend .pill,.legend .casenote{margin:0 6px 0 0}
+.sheetpreview{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:12px 0 16px}.sheetpreview table{font-size:12px}.sheetpreview th,.sheetpreview td{padding:8px 12px;border-right:1px solid #eaf0f6;white-space:nowrap}.sheetpreview th{background:#eef4fb;color:var(--ink);font-weight:700}.sheetpreview th.req{background:#dcebfb;color:var(--blue)}.sheetpreview td{color:var(--muted)}
+.layoutcols{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0;font-size:12px}.layoutcols dt{font-weight:700;color:var(--ink)}.layoutcols dt.req,.req{color:var(--blue)}.layoutcols dd{margin:0;color:#61748b}.layoutcols .alias{color:var(--muted);font-style:italic}

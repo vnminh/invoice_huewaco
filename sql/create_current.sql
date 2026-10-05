@@ -30,10 +30,24 @@ CREATE TABLE IF NOT EXISTS payment_templates (
 	provider_kind VARCHAR(16) NOT NULL, 
 	provider_name TEXT NOT NULL, 
 	created_at VARCHAR(40) NOT NULL, 
+	max_transfer_customers INTEGER NOT NULL, 
+	settlement_rows INTEGER NOT NULL, 
 	PRIMARY KEY (id), 
 	CONSTRAINT ck_templates_payment_mode CHECK (payment_mode IN ('unknown', 'proxy', 'self')), 
 	CONSTRAINT ck_templates_provider_kind CHECK (provider_kind IN ('unknown', 'bank', 'wallet', 'other')), 
 	UNIQUE (fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS customer_id_slots (
+	id SERIAL NOT NULL, 
+	context TEXT NOT NULL, 
+	hits INTEGER NOT NULL, 
+	total INTEGER NOT NULL, 
+	example TEXT NOT NULL, 
+	updated_at VARCHAR(40) NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_id_slots_counts CHECK (hits >= 0 AND hits <= total), 
+	UNIQUE (context)
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_metadata (
@@ -53,9 +67,9 @@ CREATE TABLE IF NOT EXISTS customer_aliases (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_customer_aliases_customer_id ON customer_aliases (customer_id);
-
 CREATE INDEX IF NOT EXISTS ix_customer_aliases_normalized_alias ON customer_aliases (normalized_alias);
+
+CREATE INDEX IF NOT EXISTS ix_customer_aliases_customer_id ON customer_aliases (customer_id);
 
 CREATE TABLE IF NOT EXISTS payer_entities (
 	id SERIAL NOT NULL, 
@@ -71,9 +85,9 @@ CREATE TABLE IF NOT EXISTS payer_entities (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_payer_entities_payer_name ON payer_entities (payer_name);
-
 CREATE INDEX IF NOT EXISTS ix_payer_entities_customer_id ON payer_entities (customer_id);
+
+CREATE INDEX IF NOT EXISTS ix_payer_entities_payer_name ON payer_entities (payer_name);
 
 CREATE TABLE IF NOT EXISTS knowledge_receipts (
 	id SERIAL NOT NULL, 
@@ -117,11 +131,11 @@ CREATE TABLE IF NOT EXISTS transaction_patterns (
 	FOREIGN KEY(payer_id) REFERENCES payer_entities (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_transaction_patterns_customer_id ON transaction_patterns (customer_id);
+CREATE INDEX IF NOT EXISTS ix_transaction_patterns_template_id ON transaction_patterns (template_id);
 
 CREATE INDEX IF NOT EXISTS ix_patterns_template_customer ON transaction_patterns (template_id, customer_id);
 
-CREATE INDEX IF NOT EXISTS ix_transaction_patterns_template_id ON transaction_patterns (template_id);
+CREATE INDEX IF NOT EXISTS ix_transaction_patterns_customer_id ON transaction_patterns (customer_id);
 
 CREATE TABLE IF NOT EXISTS numeric_slots (
 	id SERIAL NOT NULL, 
@@ -154,9 +168,9 @@ CREATE TABLE IF NOT EXISTS numeric_features (
 	FOREIGN KEY(pattern_id) REFERENCES transaction_patterns (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_numeric_features_pattern_id ON numeric_features (pattern_id);
-
 CREATE INDEX IF NOT EXISTS ix_numeric_features_value_digest ON numeric_features (value_digest);
+
+CREATE INDEX IF NOT EXISTS ix_numeric_features_pattern_id ON numeric_features (pattern_id);
 
 CREATE TABLE IF NOT EXISTS retrieval_postings (
 	id SERIAL NOT NULL, 
@@ -169,9 +183,9 @@ CREATE TABLE IF NOT EXISTS retrieval_postings (
 	FOREIGN KEY(pattern_id) REFERENCES transaction_patterns (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_retrieval_postings_pattern_id ON retrieval_postings (pattern_id);
-
 CREATE INDEX IF NOT EXISTS ix_retrieval_postings_token_digest ON retrieval_postings (token_digest);
+
+CREATE INDEX IF NOT EXISTS ix_retrieval_postings_pattern_id ON retrieval_postings (pattern_id);
 
 CREATE TABLE IF NOT EXISTS hard_negatives (
 	id SERIAL NOT NULL, 
