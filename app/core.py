@@ -232,9 +232,14 @@ class Core:
             return False
         norm = self.normalize(transaction.raw)
         chosen_key = id_key(str(customer_id).strip())
-        if norm.customer_ids and {id_key(value) for value in norm.customer_ids} != {chosen_key}:
-            raise ValueError('Mã khách hàng ghi rõ trong nội dung không khớp mã được xác nhận, hoặc có nhiều mã khách hàng. '
-                             'Kiểm tra dòng này trước khi học; không tự gộp hay chia các mã số.')
+        detected_keys = {id_key(value) for value in norm.customer_ids}
+        if detected_keys and chosen_key not in detected_keys:
+            raise ValueError('Mã khách hàng được xác nhận không có trong các mã khách hàng ghi rõ trong nội dung. '
+                             'Kiểm tra lại mã xác nhận hoặc nội dung của dòng này trước khi học.')
+        # A single transfer may pay for several customers. Each confirmed label
+        # gets its own link, full ordered numbers and receipt; other mentioned
+        # IDs are not automatically confirmed or assigned to this customer.
+        multiple_customers = len(detected_keys) > 1
         # A water contract may be shared by several confirmed customer IDs.
         # Keep each customer's values/link separately; the explicit ID guard above still applies.
         self.check_model(session, writing=True)
@@ -243,7 +248,10 @@ class Core:
         receipt = fingerprint(receipt_key)
         already_learned = session.scalar(select(KnowledgeReceipt.id).where(KnowledgeReceipt.fingerprint == receipt))
         customer = self.ensure_customer(session, customer_id, customer_name)
-        self.learn_names(session, customer, transaction.raw)
+        if not multiple_customers:
+            # A payer's name in a multi-customer transfer is not necessarily the
+            # name of any individual recipient. Explicitly confirmed names still apply.
+            self.learn_names(session, customer, transaction.raw)
         for number in norm.numbers:
             if number['numeric_type'] == 'UNKNOWN_NUMBER' and number['value'].isdigit() and id_key(number['value']) == id_key(customer.id):
                 number['confirmed_customer_value'] = True
@@ -869,9 +877,12 @@ class Core:
         date = record.get('date') or ''
         receipt_key = learning_receipt(record['raw'], chosen, date, record.get('amount', 0), record.get('payer', 'BIDV')) if chosen else 'reject:' + record['entry_key']
         wrong = record.get('customer_id')
+        mentioned_ids = {id_key(value) for value in self.normalize(record['raw']).customer_ids}
+        co_recipient = (accepted and chosen and wrong and len(mentioned_ids) > 1
+                        and id_key(chosen) in mentioned_ids and id_key(wrong) in mentioned_ids)
         negative_receipt = fingerprint('negative-review:' + record['entry_key'] + ':' + str(wrong) + ':' + str(chosen))
         previous_negative = session.scalar(select(KnowledgeReceipt.id).where(KnowledgeReceipt.fingerprint == negative_receipt))
-        if not previous_negative and wrong and wrong != chosen and session.get(Customer, wrong):
+        if not previous_negative and wrong and wrong != chosen and not co_recipient and session.get(Customer, wrong):
             normalized = record.get('normalization') or self.normalize(record['raw']).dict()
             negative_hash = fingerprint(normalized['normalized'])
             negative = session.scalar(select(HardNegative).where(HardNegative.transaction_fingerprint == negative_hash,

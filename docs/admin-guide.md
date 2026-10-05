@@ -108,11 +108,13 @@ Những dòng vẫn đọc được nhưng ngày/số tiền/chiều giao dịch
 - Khi đã kiểm tra, nhập/chọn mã khách hàng và tên hoặc bí danh đúng, rồi bấm **Xác nhận & học**.
 - Với khách hàng mới, hệ thống thêm hồ sơ rồi học nội dung giao dịch cho khách hàng đó.
 - Với khách hàng đã có, hệ thống bổ sung mẫu mới hoặc cập nhật mẫu phù hợp. Các mẫu khác vẫn được giữ.
-- Khi sửa đề xuất từ khách hàng A sang B, hệ thống học cho B và ghi nhận bằng chứng không ghép giao dịch này với A.
+- Khi sửa đề xuất từ khách hàng A sang B, hệ thống học cho B và ghi nhận bằng chứng không ghép giao dịch này với A, trừ khi nội dung ghi rõ cả A và B là các khách hàng được thanh toán.
 - Bấm **Không ghép khách hàng này** không tạo mẫu dương; nếu có khách hàng đã được đề xuất, hệ thống ghi nhận bằng chứng loại trừ.
 - Dòng đã xác nhận không được sửa ngầm qua thao tác xác nhận lại. Sửa kiến thức đã học bằng chức năng quản lý mẫu/hồ sơ.
 
 Nếu kết nối bị gián đoạn sau khi đã xác nhận, ý định xác nhận nằm trong tệp làm việc. Khi khởi động lại, hệ thống tiếp tục các xác nhận này. Có thể bấm **Tiếp tục học dữ liệu đã xác nhận** nếu cần. Dấu chống trùng bảo đảm thử lại không học hai lần.
+
+Giao dịch thanh toán cho nhiều IDKH được phép học. Mỗi dòng học xác nhận một khách hàng; có thể nhập các dòng cùng nội dung với IDKH/tên tương ứng hoặc thêm từng mẫu cho từng khách hàng qua Quản lý kiến thức. Không tự học các IDKH còn lại chỉ từ nội dung. Giao dịch nhiều IDKH trong đối soát vẫn cần kiểm tra/phân bổ thủ công, không tự chọn một khách hàng hay chia số tiền. Xem [ví dụ CSV học nhiều khách hàng](excel-layout-and-export.md).
 
 ### Xác nhận nhiều dòng
 

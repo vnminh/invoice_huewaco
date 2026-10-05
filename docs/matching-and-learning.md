@@ -70,11 +70,23 @@ Giá trị số không được đổi sang float/int, không cắt chuỗi, kh�
 
 `HD` luôn là **hợp đồng**, không phải hóa đơn. Chỉ ngữ cảnh `hóa đơn/invoice` mới là số hóa đơn. `TKThe` là thẻ của người trả tiền, không phải mã khách hàng.
 
+Nhãn mã khách hàng nhận các cách ghi `Ma KH-279021`, `Mã KH:279021`, `Mã khách hàng`, `Mã số KH`, `MaKH279021`, `IDKH`, `ID KH`, `MKH`, `KH`, `Customer ID/Code/Number`, có hoặc không dấu, hoa/thường và dấu phân cách. Danh sách có nhãn như `KH:001234,005678`, `IDKH:001234 và 005678` hoặc lặp lại `KH:001234 KH:005678` giữ từng giá trị đầy đủ theo thứ tự. Không chia một chuỗi số liền thành nhiều mã dựa vào độ dài.
+
+Ví dụ `TTHD Tien nuoc Ma KH-279021 Ma HD-Ky 8/2026` có mã khách hàng **279021**; `Ky 8/2026` là kỳ, không phải giá trị hợp đồng. Kỳ và ngày tiếp tục được bỏ khỏi đặc trưng học, chỉ đọc riêng để hiển thị ở đối soát.
+
 Có một ngoại lệ rõ ràng ở **tra cứu hồ sơ mã khách hàng**: `id_key()` bỏ số 0 đầu để tìm các biến thể mã được xác nhận là cùng hồ sơ, ví dụ `001234` và `1234`. Cơ chế này không áp dụng cho hợp đồng, thẻ, tài khoản hoặc giá trị lưu trong numeric features. Giá trị đầy đủ và mẫu theo từng cách ghi vẫn được giữ và ưu tiên so khớp nguyên văn. Nếu khóa này ánh xạ tới nhiều hồ sơ, đối soát trả manual 0%; học một mã biến thể mới cũng không tự chọn hồ sơ đầu tiên để gộp.
 
 ### Quan hệ HD và IDKH
 
 Học không áp ràng buộc một HD chỉ thuộc một khách hàng. Ví dụ `KH:001234 HD:700012` và `KH:005678 HD:700012` có thể được học sau xác nhận; các số lưu trên liên kết riêng. Cột nhãn xác nhận vẫn phải khớp IDKH ghi rõ trong nội dung.
+
+### Một giao dịch thanh toán cho nhiều khách hàng
+
+Nội dung có nhiều IDKH được phép học. Mỗi dòng học xác nhận một IDKH; IDKH này chỉ cần nằm trong các mã ghi rõ trong nội dung, không cần là mã duy nhất. Muốn học cho hai khách hàng, nhập hai dòng có cùng `NOIDUNG` nhưng `IDKH` và `TENKH` tương ứng, hoặc thêm từng liên kết qua **Quản lý kiến thức → Thêm mẫu**. Không gộp danh sách vào một mã khách hàng mới và không tự xác nhận các mã còn lại chỉ vì chúng xuất hiện trong nội dung.
+
+Mỗi khách hàng có một `transaction_patterns` riêng liên kết tới mẫu giao dịch; `segments` và `numeric_features` giữ toàn bộ các số và thứ tự của giao dịch nhiều khách hàng. Posting `id:` chỉ dùng IDKH của hồ sơ được xác nhận, không gán các IDKH khác trong nội dung cho hồ sơ đó. Receipt chống trùng cũng riêng theo khách hàng. Tên trích tự động không được dùng làm bí danh trong giao dịch nhiều khách hàng; chỉ tên người dùng xác nhận cho từng IDKH được học.
+
+Đối soát hiện trả một khách hàng cho mỗi dòng, nên giao dịch có nhiều IDKH vẫn được đưa vào kiểm tra thủ công ở 0% để người dùng xác nhận/phân bổ. Không tự chọn một mã hay chia số tiền. Nếu đổi xác nhận từ A sang B khi cả A và B đều có trong giao dịch, không tạo bằng chứng loại trừ A.
 
 Trong đối soát, IDKH rõ ràng được tra trên toàn kho trước; chưa biết hoặc ánh xạ nhiều hồ sơ vẫn manual 0%, không chuyển sang chọn theo HD. IDKH đã biết duy nhất giới hạn ứng viên và được ưu tiên trước HD, kể cả khi HD chưa liên kết tới khách hàng đó hoặc khác ví dụ đại diện. Không học quan hệ mới trong lúc đối soát. Khi không có IDKH, HD dùng chung không được coi là bằng chứng duy nhất; các chủ sở hữu hợp đồng và các mã khác vẫn được kiểm tra. `customer_id_priority_over_contract`, `shared_contract_customer_ids`, `consistent_new_contracts` trong evidence giải thích việc ưu tiên, tập khách hàng dùng HD và quan hệ chờ xác nhận.
 
@@ -183,7 +195,7 @@ Bí danh tự động được lập posting `name:` cho các mẫu của khách
 
 Với tên đã xác nhận xuất hiện trong giao dịch, hệ thống tra chủ sở hữu tên trên **toàn kho**, gồm cả hồ sơ ngoài tập ứng viên và bí danh tự động. Chỉ tên thuộc duy nhất khách hàng đang xét mới hỗ trợ feature khách hàng/điều kiện tên + chi tiết riêng. Tên trùng nhiều hồ sơ không nâng điểm này; ID/hợp đồng/số đầy đủ vẫn được kiểm tra độc lập. Evidence có `unique_confirmed_aliases` và `alias_owners` để đối chiếu.
 
-Trước khi học, mã khách hàng ghi rõ trong nội dung phải thống nhất với mã được xác nhận; nhiều mã khác nhau bị từ chối học. Hợp đồng đã được học cho khách hàng khác cũng bị chặn khi nhãn mới không thuộc các chủ sở hữu đã biết. Lỗi được rollback riêng dòng, không tạo khách hàng/bí danh/receipt/mẫu dở dang. Người dùng kiểm tra dữ liệu hoặc sửa kiến thức sai trước khi học lại. Số thẻ/tài khoản không bị tự coi là CUSTOMER_ID chỉ để qua kiểm tra này.
+Trước khi học, mã khách hàng được xác nhận phải nằm trong các IDKH ghi rõ trong nội dung, nếu có. Nhiều mã khác nhau không làm dòng bị từ chối: cùng giao dịch được học riêng cho từng khách hàng đã xác nhận. Một HD cũng có thể liên kết nhiều IDKH. Mã xác nhận hoàn toàn khác các mã ghi rõ vẫn báo lỗi; lỗi được rollback riêng dòng, không tạo khách hàng/bí danh/receipt/mẫu dở dang. Số thẻ/tài khoản không bị tự coi là CUSTOMER_ID chỉ để qua kiểm tra này.
 
 Import chuẩn bị NER trước transaction ghi và xử lý tối đa 32 dòng mỗi đợt. Receipt tiếp tục chống tăng lần học trùng; khi nội dung đã học, hệ thống vẫn có thể bổ sung bí danh còn thiếu trước khi trả `learned=False`. Metadata import có chữ ký `alias_extractor` theo cấu hình NER. Có thể nhập lại tệp đã học ở phiên bản trước để bổ sung bí danh mà không tăng `seen_count` của mẫu/số. Tệp hoàn tất với cùng chữ ký và không có lỗi tiếp tục được bỏ qua. Nếu lần nhập có NER chưa sẵn sàng, cho phép thử lại sau khi sửa cấu hình/phụ thuộc và khởi động lại; không bắt buộc xóa kiến thức.
 
