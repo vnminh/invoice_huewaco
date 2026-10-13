@@ -72,6 +72,20 @@ Dùng khoảng Wilson 95%: cận dưới >=0,95 mới nhận là vị trí IDKH;
 
 Các liên kết vừa xác nhận có khóa `slot-id` dùng ngay, không phải chờ đủ mẫu cho quy tắc tổng hợp. Sau xác nhận đơn lẻ, các quy tắc tổng hợp liên quan có thể tạm vắng cho tới lần nhập/đếm lại; đây là lựa chọn bảo thủ để tránh dùng quy tắc cũ sai.
 
+### Vị trí tên và tìm theo giá trị đã xác nhận
+
+Tệp FN cho biết tên thật của khách hàng, nên hệ thống tìm tên đó trong nội dung (bỏ dấu, chữ thường, khớp trọn tên ≥ 2 từ) để biết **vị trí**. `customer_name_slots` lưu `(channel_key, context, hits, total, boundaries)`: context là hai đơn vị đứng trước tên (ví dụ `N10 ;` cho `BIDV;5510000370;<tên> chuyen tien`), `boundaries` là đơn vị kết thúc tên (`.`, `;`, `tra`…). Một vị trí là trường tên khi có ≥ 20 lần và cận dưới Wilson ≥ 0,6 (người trả đôi khi ghi tên chính mình — vẫn là tên). Bảng được đếm lại cùng vị trí IDKH sau mỗi lần nhập hoặc `scripts/reindex_knowledge.py`.
+
+Khi đối soát, nếu NER không đọc được tên:
+
+1. đọc tên ở vị trí đã học của ngân hàng/kênh (`learned_name_position`);
+2. so với mẫu lịch sử: tên NER đã lưu → tên đã xác nhận của khách hàng tìm thấy trong mẫu (`confirmed_name`) → tên ở vị trí đã học;
+3. tên vẫn được so **trọn vẹn**, không theo từ chung. Lý do hiển thị cả hai tên, ví dụ "giao dịch: LE THI TAM; mẫu đã học: nguyen bi".
+
+IDKH làm tương tự: nếu quy tắc/vị trí đã học không thấy mã nhưng nội dung có **đúng một** số 6 chữ số độc lập trùng IDKH của ứng viên, không phải số tiền/thẻ/tài khoản/tham chiếu/vị trí không-phải-mã, và không mâu thuẫn vị trí mã đã xác nhận, thì coi là mã ghi trong nội dung (cần mục đích tiền nước). Nội dung không bắt buộc có IDKH; khi không có, so khớp dùng thẻ, tên, mẫu như trước.
+
+Khi nội dung ghi đúng một IDKH, khách hàng khác chỉ được gợi ý nhờ tài khoản/tên/số trùng sẽ bị hạ điểm, ghi chú "Khác mã … ghi trong nội dung" và không bao giờ thành khách hàng của dòng.
+
 ## 5. Một khách hàng có nhiều mẫu
 
 `payment_templates` lưu bố cục chung; `transaction_patterns` là các liên kết có ví dụ, số và lịch sử riêng. Một khách hàng có nhiều liên kết, một mẫu có nhiều khách hàng.

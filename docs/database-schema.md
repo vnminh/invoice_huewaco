@@ -1,6 +1,6 @@
 # Schema PostgreSQL của kho kiến thức
 
-Schema hiện tại có **16 bảng**, tạo mới bằng một file [create_current.sql](../sql/create_current.sql). Backend không tự tạo/migrate. Kho cũ dùng [hướng dẫn nâng cấp đến 007](migration-and-storage.md).
+Schema hiện tại có **17 bảng**, tạo mới bằng một file [create_current.sql](../sql/create_current.sql). Backend không tự tạo/migrate. Kho cũ dùng [hướng dẫn nâng cấp đến 008](migration-and-storage.md).
 
 ## Quan hệ
 
@@ -42,6 +42,7 @@ Một mẫu có nhiều khách hàng; một khách hàng có nhiều mẫu. Cùn
 | `numeric_features` | Giá trị nguyên chuỗi TEXT, SHA-256, vai trò, confidence/count/missing_count theo slot; UNIQUE(pattern_id, slot_index, value_digest). |
 | `retrieval_postings` | Token tìm kiếm TEXT, SHA-256, pattern_id, trọng số; UNIQUE(token_digest, pattern_id). |
 | `customer_id_slots` | Ngữ cảnh số theo ngân hàng, hits/total/ví dụ; UNIQUE(channel_key, context). CHECK 0 <= hits <= total. |
+| `customer_name_slots` | Vị trí tên theo ngân hàng: context hai đơn vị trước tên, hits/total, `boundaries` (đơn vị kết thúc tên), ví dụ; UNIQUE(channel_key, context). Đếm lại sau mỗi lần nhập. |
 | `hard_negatives` | Cặp dấu nội dung/khách hàng đã bị từ chối (nội dung chuẩn hóa và chữ ký ổn định theo kênh), pattern_id có thể NULL, count; UNIQUE(transaction_fingerprint, customer_id). |
 | `knowledge_receipts` | Fingerprint chống học lặp, customer_id, tháng học từ ngày giao dịch. Không lưu kết quả đối soát. |
 | `knowledge_metadata` | Phiên bản encoder/extractor, trạng thái nhập, phiên bản thống kê ID slots và trạng thái bảo trì. |

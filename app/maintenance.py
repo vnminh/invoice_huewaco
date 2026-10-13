@@ -153,6 +153,8 @@ def reindex_knowledge(engine, core, batch_size=200, progress=None):
         if engine.dialect.name == 'postgresql':
             session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
         slots = rebuild(session)
+        from .name_slots import rebuild as rebuild_names
+        slots = {**slots, **rebuild_names(session)}
         touch_revision(session)
         for key, value in (('feature_extractor', core.extractor.name), ('embedding_model', core.embedder.name),
                            ('knowledge_maintenance', 'completed')):

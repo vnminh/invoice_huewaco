@@ -232,6 +232,22 @@ class IdSlotStat(Base):
                      UniqueConstraint('channel_key', 'context', name='uq_id_slots_channel_context'))
 
 
+class NameSlotStat(Base):
+    """Learned from confirmed narratives: where a bank layout writes a customer name."""
+    __tablename__ = 'customer_name_slots'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_key: Mapped[str] = mapped_column(Text, default='unknown')
+    context: Mapped[str] = mapped_column(Text)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    # Units that ended confirmed names at this position, with counts (e.g. {".": 40, "chuyen": 12}).
+    boundaries: Mapped[dict] = mapped_column(DOC, default=dict)
+    example: Mapped[str] = mapped_column(Text, default='')
+    updated_at: Mapped[str] = mapped_column(String(40), default=now)
+    __table_args__ = (CheckConstraint('hits >= 0 AND hits <= total', name='ck_name_slots_counts'),
+                     UniqueConstraint('channel_key', 'context', name='uq_name_slots_channel_context'))
+
+
 class Metadata(Base):
     __tablename__ = 'knowledge_metadata'
     key: Mapped[str] = mapped_column(String(100), primary_key=True)

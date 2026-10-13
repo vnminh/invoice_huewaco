@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS customer_id_slots (
 	CONSTRAINT uq_id_slots_channel_context UNIQUE (channel_key, context)
 );
 
+CREATE TABLE IF NOT EXISTS customer_name_slots (
+	id SERIAL NOT NULL,
+	channel_key TEXT NOT NULL,
+	context TEXT NOT NULL,
+	hits INTEGER NOT NULL,
+	total INTEGER NOT NULL,
+	boundaries JSONB NOT NULL,
+	example TEXT NOT NULL,
+	updated_at VARCHAR(40) NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_name_slots_counts CHECK (hits >= 0 AND hits <= total),
+	CONSTRAINT uq_name_slots_channel_context UNIQUE (channel_key, context)
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_metadata (
 	key VARCHAR(100) NOT NULL,
 	value TEXT NOT NULL,
@@ -87,9 +101,9 @@ CREATE TABLE IF NOT EXISTS knowledge_changes (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_knowledge_changes_created_at ON knowledge_changes (created_at);
-
 CREATE INDEX IF NOT EXISTS ix_knowledge_changes_entity_key ON knowledge_changes (entity_key);
+
+CREATE INDEX IF NOT EXISTS ix_knowledge_changes_created_at ON knowledge_changes (created_at);
 
 CREATE TABLE IF NOT EXISTS customer_aliases (
 	id SERIAL NOT NULL,
@@ -102,9 +116,9 @@ CREATE TABLE IF NOT EXISTS customer_aliases (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_customer_aliases_normalized_alias ON customer_aliases (normalized_alias);
-
 CREATE INDEX IF NOT EXISTS ix_customer_aliases_customer_id ON customer_aliases (customer_id);
+
+CREATE INDEX IF NOT EXISTS ix_customer_aliases_normalized_alias ON customer_aliases (normalized_alias);
 
 CREATE TABLE IF NOT EXISTS payer_entities (
 	id SERIAL NOT NULL,
@@ -137,9 +151,9 @@ CREATE TABLE IF NOT EXISTS collection_memberships (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_collection_memberships_template_id ON collection_memberships (template_id);
-
 CREATE INDEX IF NOT EXISTS ix_collection_memberships_customer_id ON collection_memberships (customer_id);
+
+CREATE INDEX IF NOT EXISTS ix_collection_memberships_template_id ON collection_memberships (template_id);
 
 CREATE TABLE IF NOT EXISTS knowledge_receipts (
 	id SERIAL NOT NULL,
@@ -186,13 +200,13 @@ CREATE TABLE IF NOT EXISTS transaction_patterns (
 	FOREIGN KEY(payer_id) REFERENCES payer_entities (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_transaction_patterns_customer_id ON transaction_patterns (customer_id);
-
-CREATE INDEX IF NOT EXISTS ix_transaction_patterns_channel_key ON transaction_patterns (channel_key);
-
 CREATE INDEX IF NOT EXISTS ix_patterns_template_customer ON transaction_patterns (template_id, customer_id);
 
 CREATE INDEX IF NOT EXISTS ix_transaction_patterns_template_id ON transaction_patterns (template_id);
+
+CREATE INDEX IF NOT EXISTS ix_transaction_patterns_channel_key ON transaction_patterns (channel_key);
+
+CREATE INDEX IF NOT EXISTS ix_transaction_patterns_customer_id ON transaction_patterns (customer_id);
 
 CREATE TABLE IF NOT EXISTS numeric_slots (
 	id SERIAL NOT NULL,
@@ -225,9 +239,9 @@ CREATE TABLE IF NOT EXISTS numeric_features (
 	FOREIGN KEY(pattern_id) REFERENCES transaction_patterns (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_numeric_features_value_digest ON numeric_features (value_digest);
-
 CREATE INDEX IF NOT EXISTS ix_numeric_features_pattern_id ON numeric_features (pattern_id);
+
+CREATE INDEX IF NOT EXISTS ix_numeric_features_value_digest ON numeric_features (value_digest);
 
 CREATE TABLE IF NOT EXISTS retrieval_postings (
 	id SERIAL NOT NULL,
@@ -240,9 +254,9 @@ CREATE TABLE IF NOT EXISTS retrieval_postings (
 	FOREIGN KEY(pattern_id) REFERENCES transaction_patterns (id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_retrieval_postings_pattern_id ON retrieval_postings (pattern_id);
-
 CREATE INDEX IF NOT EXISTS ix_retrieval_postings_token_digest ON retrieval_postings (token_digest);
+
+CREATE INDEX IF NOT EXISTS ix_retrieval_postings_pattern_id ON retrieval_postings (pattern_id);
 
 CREATE TABLE IF NOT EXISTS hard_negatives (
 	id SERIAL NOT NULL,
@@ -280,9 +294,9 @@ CREATE TABLE IF NOT EXISTS recurring_links (
 
 CREATE INDEX IF NOT EXISTS ix_recurring_links_pattern_id ON recurring_links (pattern_id);
 
-CREATE INDEX IF NOT EXISTS ix_recurring_links_customer_id ON recurring_links (customer_id);
-
 CREATE INDEX IF NOT EXISTS ix_recurring_channel_signature ON recurring_links (channel_key, signature_hash);
+
+CREATE INDEX IF NOT EXISTS ix_recurring_links_customer_id ON recurring_links (customer_id);
 
 CREATE INDEX IF NOT EXISTS ix_customers_name_trgm ON customers USING gin(normalized_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_aliases_trgm ON customer_aliases USING gin(normalized_alias gin_trgm_ops);

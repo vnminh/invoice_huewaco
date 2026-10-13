@@ -11,7 +11,7 @@ from sqlalchemy.exc import DataError, IntegrityError
 from .db import Customer, KnowledgeReceipt, Metadata, Pattern, sessions
 from .excel import ConfirmedCsv, StreamingWorkbook, LAYOUT_VERSION, layout_guidance
 from .core import id_key
-from . import id_slots
+from . import id_slots, name_slots
 from .id_slots import BATCH_MIN_CUSTOMERS
 from .normalize import fold
 from .identifiers import channel_key, confirmed_customer_ids
@@ -196,6 +196,8 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
         with write_session() as session:
             # Customer-ID positions are recounted from all confirmed links after each import.
             summary['id_slots'] = id_slots.rebuild(session, check_cancel=check_cancel)
+            # Name positions of shared layouts, found from each row's confirmed name.
+            summary['name_slots'] = name_slots.rebuild(session, check_cancel=check_cancel)
     except ImportCancelled:
         summary.update(status='cancelled', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
                        periods=sorted(periods), payers=dict(payers),

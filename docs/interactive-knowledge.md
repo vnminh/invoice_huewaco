@@ -61,7 +61,7 @@ Khi chỉ có thông tin bối cảnh, vẫn cung cấp [nhóm khách hàng cầ
 
 ## Schema và nhất quán
 
-Migration 006 thêm hai bảng (schema hiện tại qua 007 có 16 bảng):
+Migration 006 thêm hai bảng (schema hiện tại qua 007 có 17 bảng):
 
 - `bank_aliases`: `alias`, `normalized_alias` UNIQUE, `channel_key`, `note`, `used_at`. Chỉ nhận các kênh chuẩn được hỗ trợ; không nối alias→alias. Không ghi đè một tên ngân hàng đã nhận diện sang ngân hàng khác. Nếu namespace cũ đã có mẫu, yêu cầu chuyển dữ liệu/dựng lại chỉ mục trong đợt bảo trì thay vì âm thầm đổi khóa.
 - `knowledge_changes`: `actor`, `action`, `entity_key`, `before`, `after`, `reversible`, `reverted_by`, `created_at`. Nhật ký của **kiến thức**, không lưu các dòng kết quả đối soát. Các ví dụ giao dịch chỉ xuất hiện khi chính ví dụ kiến thức được thêm/sửa/xóa. Nhập tệp lưu tên/count; xác nhận dòng lưu tập IDKH và thao tác, không sao chép lịch sử lọc vào bảng audit.

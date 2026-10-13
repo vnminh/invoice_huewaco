@@ -28,6 +28,30 @@ def compare_entity_names(query_names, history_names):
             'query_names': list(query_names), 'history_names': list(history_names)}
 
 
+def locate_names(raw, names):
+    """Find confirmed customer names written in the narrative, e.g. "nguyen bi" for "Nguyễn Bỉ".
+
+    Used when NER returns nothing (lowercase/unaccented text). Only whole names of at
+    least two words match, as complete word sequences; the span is taken from the original
+    text so its position is known. Returns NER-shaped entities with source "confirmed_name".
+    """
+    text = str(raw or '')
+    folded = ''.join(fold(char)[:1] or ' ' for char in text)  # same length as text
+    entities, seen = [], set()
+    for name in sorted({str(name or '') for name in names}, key=len, reverse=True):
+        words = re.findall(r'[a-z]+', fold(name))
+        if len(words) < 2 or any(char.isdigit() for char in name):
+            continue
+        pattern = r'(?<![a-z\d])' + r'[\s.,;:_-]+'.join(map(re.escape, words)) + r'(?![a-z\d])'
+        for match in re.finditer(pattern, folded):
+            if any(start < match.end() and match.start() < end for start, end in seen):
+                continue
+            seen.add(match.span())
+            entities.append({'name': text[match.start():match.end()], 'label': 'PERSON', 'score': None,
+                             'source': 'confirmed_name', 'start': match.start(), 'end': match.end()})
+    return sorted(entities, key=lambda entity: entity['start'])
+
+
 def bank_name_entities(raw):
     fields = mb_water_fields(raw) or agr_water_fields(raw)
     if not fields or not fields['name']:

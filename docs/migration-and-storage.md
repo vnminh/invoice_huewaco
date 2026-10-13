@@ -11,7 +11,7 @@ CREATE USER invoice_app WITH PASSWORD 'THAY_BANG_MAT_KHAU_CUA_BAN';
 CREATE DATABASE invoice_filter OWNER invoice_app;
 ```
 
-Sau đó chỉ chạy [sql/create_current.sql](../sql/create_current.sql), tạo trực tiếp **16 bảng** và chỉ mục hiện tại. Không cần init hoặc các migration trước/sau. File không tạo login/database, không xóa dữ liệu, không nâng cấp bảng cũ bằng `IF NOT EXISTS`.
+Sau đó chỉ chạy [sql/create_current.sql](../sql/create_current.sql), tạo trực tiếp **17 bảng** và chỉ mục hiện tại. Không cần init hoặc các migration trước/sau. File không tạo login/database, không xóa dữ liệu, không nâng cấp bảng cũ bằng `IF NOT EXISTS`.
 
 Linux, từ shell tài khoản của bạn có quyền đọc project:
 

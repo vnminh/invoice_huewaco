@@ -32,7 +32,7 @@ Virtualenv phải được tạo lại trên từng hệ điều hành; không c
 
 Sửa DATABASE_URL trong .env. Quản trị viên tự tạo database/login và chạy SQL; backend không tự khởi tạo hoặc migrate PostgreSQL.
 
-**Database mới**: chỉ chạy [sql/create_current.sql](sql/create_current.sql) để tạo thẳng **16 bảng**. **Kho đã qua 006**: chạy [007_recurring_memory.sql](sql/migrations/007_recurring_memory.sql), rồi `scripts/rebuild_recurring_memory.py` khi backend dừng. **Kho cũ đến 004**: chạy lần lượt 005, 006, 007 rồi `scripts/reindex_knowledge.py`; công cụ này cũng bổ sung bộ nhớ nội dung đã xác nhận. Kho v7/005 chạy 006, 007 rồi rebuild. Nhập lại FN/CSV để phục hồi các biến thể chưa có ví dụ trong kho cũ. Xem [hướng dẫn Windows/Linux](docs/migration-and-storage.md). Backend không tự chạy SQL.
+**Database mới**: chỉ chạy [sql/create_current.sql](sql/create_current.sql) để tạo thẳng **17 bảng**. **Kho đã qua 007**: chạy [008_name_positions.sql](sql/migrations/008_name_positions.sql) rồi `scripts/reindex_knowledge.py` (hoặc nhập lại tệp FN) để học vị trí tên. **Kho đã qua 006**: chạy [007_recurring_memory.sql](sql/migrations/007_recurring_memory.sql), rồi `scripts/rebuild_recurring_memory.py` khi backend dừng. **Kho cũ đến 004**: chạy lần lượt 005, 006, 007 rồi `scripts/reindex_knowledge.py`; công cụ này cũng bổ sung bộ nhớ nội dung đã xác nhận. Kho v7/005 chạy 006, 007 rồi rebuild. Nhập lại FN/CSV để phục hồi các biến thể chưa có ví dụ trong kho cũ. Xem [hướng dẫn Windows/Linux](docs/migration-and-storage.md). Backend không tự chạy SQL.
 
 Ứng dụng và script CLI tự đọc `.env` ở gốc project bằng UTF-8 (có thể có BOM). Biến môi trường đã đặt trong terminal/service được ưu tiên hơn `.env`; không cần `source .env` hay tự gán từng biến trong PowerShell.
 
@@ -74,7 +74,7 @@ Tài liệu chi tiết:
 - [Tìm kiếm, so khớp và học](docs/matching-and-learning.md): số theo thứ tự, retrieval, feature/trọng số, guard precision, chống trùng và phục hồi.
 - [Mẫu chung và thu hộ/tự trả](docs/shared-payment-templates.md): quan hệ nhiều khách hàng, số riêng theo liên kết, gán loại thủ công trên web và SQL mới.
 - [Nhận lại mẫu đã xác nhận](docs/recurring-recognition.md): giữ liên kết nhóm cũ và mẫu cá nhân mới, điều kiện tự ghép và nâng cấp.
-- [Schema database](docs/database-schema.md): 16 bảng, quan hệ, trường, chỉ mục, cách lưu mẫu/hóa đơn/số và quyền quản lý.
+- [Schema database](docs/database-schema.md): 17 bảng, quan hệ, trường, chỉ mục, cách lưu mẫu/hóa đơn/số và quyền quản lý.
 - [Cài đặt, chuyển phiên bản và lưu trữ](docs/migration-and-storage.md): SQL tự chạy, CSV sao lưu cũ, working, restart và dọn kết quả.
 - [Chạy trên Linux và Windows](docs/platform-setup.md): lệnh PowerShell, đường dẫn/cache, SQL và khác biệt thao tác file/đo RAM.
 

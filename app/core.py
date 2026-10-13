@@ -16,11 +16,12 @@ from .db import (Alias, CollectionMember, Customer, HardNegative, KnowledgeRecei
 from .embedding import Embedder, cosine, vector_buckets
 from .normalize import fold, normalize_text, identity_signature, branch_markers, RuleExtractor
 from .numeric_match import compare_ordered_numbers
-from .name_extraction import compare_entity_names, name_fields, name_key, structured_name_fields
+from .name_extraction import compare_entity_names, name_fields, name_key, structured_name_fields, locate_names
 from .retrieval import CHANNEL_LABELS, fuse_rankings
 from .payment_templates import (collection_channel, payment_hint, payment_route, shared_key, shared_shape,
                                 unique_transfer_reference)
 from .id_slots import BATCH_MIN_CUSTOMERS, SlotCache, invalidate as invalidate_id_slots
+from . import name_slots
 from .identifiers import CUSTOMER_ID, allocation_names, confirmed_customer_id, confirmed_customer_ids, id_key, channel_key
 from .interactive import resolve_channel, touch_revision
 from .recommendation_groups import attach_examples, candidate_group
@@ -60,6 +61,7 @@ def vietnamese_reason(reason):
         'Name alone or shared payer does not identify a meter reliably': 'Chỉ tên đơn vị hoặc người trả tiền chung chưa đủ để xác định đúng đồng hồ/khách hàng.',
         'Full name entities differ from the historical transaction': 'Tên trong giao dịch khác tên đầy đủ trong mẫu đã học; cần kiểm tra thủ công.',
         'Full name entities could not be verified': 'Chưa đối chiếu được tên đầy đủ trong cả giao dịch và mẫu đã học; cần kiểm tra thủ công.',
+        'Customer ID written in the narrative plus water-bill purpose': 'Mã khách hàng được ghi trong nội dung (tìm thấy mã của khách hàng này trong giao dịch); nội dung là thanh toán tiền nước.',
         'Multiple customer IDs require manual allocation': 'Có nhiều mã khách hàng trong cùng giao dịch; cần phân bổ và kiểm tra thủ công.',
         'Unknown or conflicting water contract requires manual check': 'Hợp đồng cấp nước chưa có bằng chứng khách hàng phù hợp trong lịch sử; cần kiểm tra thủ công.',
         'Exact water contract and ordered template evidence': 'Mã hợp đồng trùng chính xác; mẫu nội dung và vị trí số khớp với lịch sử đã xác nhận.',
@@ -176,6 +178,7 @@ class Core:
             raise ValueError('Local LLM extraction is disabled; use semantic embeddings with deterministic identifiers')
         self.extractor = RuleExtractor()
         self.slots = SlotCache()
+        self.name_positions = name_slots.NameSlotCache()
 
     def normalize(self, raw):
         # Learning marks per-customer numbers; never mutate a cached/shared parse.
@@ -257,9 +260,37 @@ class Core:
     def extract_names(self, raw):
         return name_fields(self.name_extractor.extract(raw)) if self.name_extractor else structured_name_fields(raw)
 
-    def compare_names(self, extracted, historical_raw, saved=None):
+    def names_with_positions(self, session, raw, payer, extracted):
+        """When NER finds no name, read names written at learned positions of this bank layout."""
+        if extracted['extracted_names']:
+            return extracted
+        located = name_slots.extract(raw, self.name_positions.slots_for(session, payer))
+        if not located:
+            return extracted
+        return name_fields({**extracted['name_extraction'], 'entities': located})
+
+    def compare_names(self, extracted, historical_raw, saved=None, raw='', confirmed_names=(), history_slots=None):
+        """Compare whole name entities; locate the candidate's confirmed names where NER found none.
+
+        NER misses lowercase/unaccented names ("nguyen bi"). The confirmed customer name,
+        folded, is then searched in that narrative to find its exact position. Names are
+        still compared as complete entities, never by shared words.
+        """
         historical = name_fields(saved) if saved and saved.get('entities') else self.extract_names(historical_raw)
-        return compare_entity_names(extracted['extracted_names'], historical['extracted_names'])
+        history_names, history_source = historical['extracted_names'], 'ner'
+        if not history_names and (located := locate_names(historical_raw, confirmed_names)):
+            history_names, history_source = [entity['name'] for entity in located], 'confirmed_name'
+        if not history_names and history_slots and (located := name_slots.extract(historical_raw, history_slots)):
+            history_names, history_source = [entity['name'] for entity in located], 'learned_name_position'
+        query_names, query_source = extracted['extracted_names'], 'ner'
+        if not query_names and (located := locate_names(raw, confirmed_names)):
+            query_names, query_source = [entity['name'] for entity in located], 'confirmed_name'
+        comparison = compare_entity_names(query_names, history_names)
+        query_source = next((e['source'] for e in extracted['name_extraction'].get('entities', [])
+                             if e['source'] == 'learned_name_position'), query_source)
+        if {'confirmed_name', 'learned_name_position'} & {query_source, history_source}:
+            comparison.update(query_source=query_source, history_source=history_source)
+        return comparison
 
     def shared_collection_template(self, session, norm, payer, names):
         """Verify a bank/provider layout independently of the customer's own patterns.
@@ -840,6 +871,19 @@ class Core:
         blocked = set(session.scalars(select(HardNegative.customer_id).where(
             HardNegative.transaction_fingerprint.in_((fingerprint(norm.normalized),
                 recurring_negative_key(recurring_signature(norm, payer)[0]))))))
+        written_keys = {id_key(value) for value in written}
+        if len(written_keys) == 1:
+            # One IDKH written in the narrative (e.g. BIDV O@L) names the recipient. A payer
+            # account/name/number that points to ANOTHER customer is kept only as a demoted,
+            # labelled hint (the same payer often pays several meters); it never becomes the
+            # row's customer. Content confirmed for that customer keeps its rank.
+            weak = {'Tài khoản hoặc thẻ từng thanh toán cho khách hàng', 'Tên hoặc bí danh trùng nội dung',
+                    'Số 6 chữ số trùng hồ sơ; cần kiểm tra vai trò'}
+            label = 'Khác mã ' + next(iter(sorted(written))) + ' ghi trong nội dung'
+            for cid, item in proposals.items():
+                if id_key(cid) not in written_keys and set(item['sources']) <= weak:
+                    item.update(score=min(item['score'], .3), conflicts_written_id=True)
+                    item['sources'].append(label)
         ordered = sorted((item for cid, item in proposals.items() if cid not in blocked),
                          key=lambda item: (-item['score'], item['customer_id']))[:6]
         names = dict(session.execute(select(Customer.id, Customer.canonical_name).where(
@@ -881,7 +925,7 @@ class Core:
         norm = self.normalize(raw)
         written_ids = set(norm.customer_ids)
         learned_ids = self.apply_learned_slots(session, norm, payer)
-        extracted = self.extract_names(raw)
+        extracted = self.names_with_positions(session, raw, payer, self.extract_names(raw))
         extracted['channel_resolution'] = {'input': input_payer, 'canonical': payer,
             'source': 'confirmed_alias' if ' '.join(fold(input_payer).split()) in session.info.get('bank_alias_map', {}) else 'standard_name'}
         route_evidence = {**payment_hint(raw), 'source': 'input_label' if payment_mode else 'unresolved'}
@@ -909,7 +953,7 @@ class Core:
                 recommendations = [item for item in merged.values()
                                    if item['customer_id'] not in recurrence['blocked_customer_ids']][:6]
                 evidence['confirmed_recurrence'] = recurrence_summary
-            best = recommendations[0] if recommendations else None
+            best = next((item for item in recommendations if not item.get('conflicts_written_id')), None)
             unknown = bool(evidence.get('unknown_customer', False))
             nearest = evidence.get('nearest_history')
             if recurrence and best and nearest is None:
@@ -964,8 +1008,12 @@ class Core:
             settlement = (template.max_transfer_customers or 1) >= BATCH_MIN_CUSTOMERS and unique_transfer_reference(norm)
             name_comparison = None
             if not norm.customer_ids and not recurrence['identity_anchor']:
+                owner = session.get(Customer, link.customer_id)
                 name_comparison = self.compare_names(extracted, link.raw_example,
-                    (link.signature or {}).get('name_extraction'))
+                    (link.signature or {}).get('name_extraction'), raw=raw,
+                    history_slots=self.name_positions.slots_for(session, link.channel_key),
+                    confirmed_names=[owner.canonical_name, *session.scalars(select(Alias.normalized_alias).where(
+                        Alias.customer_id == owner.id, Alias.confidence >= 1.0))])
                 if name_comparison['status'] == 'mismatch':
                     return manual('Full name entities differ from the historical transaction',
                                   name_entity_comparison=name_comparison)
@@ -1195,6 +1243,12 @@ class Core:
                     Alias.normalized_alias.in_(names_in_content))):
                 alias_owners[alias].add(owner)
         pattern_ids = [p.id for p in candidates]
+        # Without a labelled/learned ID, the candidate's own IDKH may still be written as a bare
+        # number ("nguyen bi tra tien nuoc 324464"). Amounts, cards, references and learned
+        # non-ID positions never count.
+        bare_ids = {id_key(n['value']) for n in norm.numbers if n['numeric_type'] == 'UNKNOWN_NUMBER'
+                    and CUSTOMER_ID.fullmatch(n['value']) and not n.get('learned_non_id')}
+        bare_ids = bare_ids if len(bare_ids) == 1 else set()  # several candidates: position decides
         saved_names = {}
         if not norm.customer_ids:
             # Reuse NER saved for this exact example, not an alias of the owner or
@@ -1254,6 +1308,11 @@ class Core:
                                   if r['type'] == 'MIXED_CODE' and r['same_role'] and r['exact'] and r['same_format']
                                   and mixed_code_owners.get(r['query_value']) == {customer.id}]
             exact_id = any(id_key(customer.id) == id_key(value) for value in norm.customer_ids)
+            # A confirmed ID position that now holds another value is a conflict, not a match.
+            id_in_text = (not norm.customer_ids and id_key(customer.id) in bare_ids
+                          and not number_comparison['unresolved_confirmed_customer_tokens'])
+            exact_id = exact_id or id_in_text
+            confirmed_names = [customer.canonical_name, *trusted_aliases[customer.id]]
             alias_matches = [alias for alias in trusted_aliases[customer.id] if alias in names_in_content]
             unique_alias_matches = [alias for alias in alias_matches if alias_owners[alias] == {customer.id}]
             matched_extracted_names = [name for name in extracted['extracted_names'] if
@@ -1297,9 +1356,10 @@ class Core:
             # Generic wire templates cannot identify customers without independent evidence.
             # The receiving company's name contains "nước" even on unrelated transfers.
             water_intent = water_payment(raw)
-            if exact_id and (text_score >= .75 or water_intent):
+            if exact_id and (water_intent if id_in_text else (text_score >= .75 or water_intent)):
                 score = max(score, .92 + .06 * text_score)
-                reason = ('Explicit customer ID in a learned position plus matching payment purpose'
+                reason = ('Customer ID written in the narrative plus water-bill purpose' if id_in_text else
+                          'Explicit customer ID in a learned position plus matching payment purpose'
                           if any(id_key(v) == id_key(customer.id) for v in learned_ids) else
                           'Explicit customer ID plus matching confirmed transfer template')
             elif unique_contract and water_intent:
@@ -1360,7 +1420,9 @@ class Core:
                 identifier_guards.append(reason)
             name_comparison = None
             if not norm.customer_ids and not numeric_customer_evidence:
-                name_comparison = self.compare_names(extracted, pattern.raw_example, saved_names.get(pattern.id))
+                name_comparison = self.compare_names(extracted, pattern.raw_example, saved_names.get(pattern.id),
+                                                     raw=raw, confirmed_names=confirmed_names,
+                                                     history_slots=self.name_positions.slots_for(session, pattern.channel_key))
                 if name_comparison['status'] != 'match':
                     score = min(score, guard_cap)
                     reason = ('Full name entities differ from the historical transaction'
@@ -1478,9 +1540,13 @@ class Core:
             # the same payment details were confirmed for a small group of customers.
             group = sorted(detail_owners) if not norm.customer_ids and 2 <= len(detail_owners) < BATCH_MIN_CUSTOMERS else []
             group_names = dict(session.execute(select(Customer.id, Customer.canonical_name).where(Customer.id.in_(group))).all()) if group else {}
+            names = best['evidence'].get('name_entity_comparison') or {}
+            name_detail = (f"Tên — giao dịch: {'; '.join(names.get('query_names') or ['chưa đọc được'])}; "
+                           f"mẫu đã học: {'; '.join(names.get('history_names') or ['chưa đọc được'])}."
+                           if manual_reason.startswith('Full name entities') else '')
             return manual(manual_reason,
-                          ('Lịch sử: cùng nội dung thanh toán đã được xác nhận cho ' +
-                           ', '.join(f'{cid} ({group_names.get(cid, "")})' for cid in group) + '.') if group else '',
+                          ' '.join(filter(None, [name_detail, ('Lịch sử: cùng nội dung thanh toán đã được xác nhận cho ' +
+                           ', '.join(f'{cid} ({group_names.get(cid, "")})' for cid in group) + '.') if group else ''])),
                           history_allocation_customer_ids=group,
                           candidate_count=len(candidates),
                           recommendations=ranked[:6],

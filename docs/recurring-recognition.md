@@ -11,7 +11,7 @@ Học thêm là bổ sung bằng chứng. Một người có thể có nhiều m
 
 ## Lưu trong database
 
-Schema hiện tại có 16 bảng. `payment_templates` giữ bố cục chung. `transaction_patterns` giữ liên kết khách hàng, mẫu, các số và ví dụ đại diện. Bảng mới `recurring_links` giữ các **biến thể nội dung đã được duyệt**, kể cả khi nhiều biến thể được gộp vào cùng một liên kết mẫu:
+Schema hiện tại có 17 bảng. `payment_templates` giữ bố cục chung. `transaction_patterns` giữ liên kết khách hàng, mẫu, các số và ví dụ đại diện. Bảng mới `recurring_links` giữ các **biến thể nội dung đã được duyệt**, kể cả khi nhiều biến thể được gộp vào cùng một liên kết mẫu:
 
 - `pattern_id`, `customer_id`, `channel_key`: liên kết được xác nhận và kênh thanh toán.
 - `signature_hash`, `signature`: dấu tra cứu và các đoạn chữ/số có thứ tự.
