@@ -16,14 +16,14 @@ from .db import (Alias, CollectionMember, Customer, HardNegative, KnowledgeRecei
 from .embedding import Embedder, cosine, vector_buckets
 from .normalize import fold, normalize_text, identity_signature, branch_markers, RuleExtractor
 from .numeric_match import compare_ordered_numbers
-from .name_extraction import name_fields, name_key, structured_name_fields
+from .name_extraction import compare_entity_names, name_fields, name_key, structured_name_fields
 from .retrieval import CHANNEL_LABELS, fuse_rankings
 from .payment_templates import (collection_channel, payment_hint, payment_route, shared_key, shared_shape,
                                 unique_transfer_reference)
 from .id_slots import BATCH_MIN_CUSTOMERS, SlotCache, invalidate as invalidate_id_slots
 from .identifiers import CUSTOMER_ID, allocation_names, confirmed_customer_id, confirmed_customer_ids, id_key, channel_key
 from .interactive import resolve_channel, touch_revision
-from .recommendation_groups import candidate_group
+from .recommendation_groups import attach_examples, candidate_group
 from .recurring import (initialize as initialize_recurring, lookup as recurring_lookup,
                         remember as remember_recurring, signature as recurring_signature,
                         negative_key as recurring_negative_key)
@@ -58,6 +58,8 @@ def vietnamese_reason(reason):
         'Confirmed unique payer account and matching payment details': 'Tài khoản người gửi chỉ gắn với một khách hàng trong lịch sử; nội dung thanh toán trùng khớp.',
         'Unique historical payment details and confirmed customer name': 'Nội dung thanh toán và tên khách hàng trùng một lịch sử duy nhất.',
         'Name alone or shared payer does not identify a meter reliably': 'Chỉ tên đơn vị hoặc người trả tiền chung chưa đủ để xác định đúng đồng hồ/khách hàng.',
+        'Full name entities differ from the historical transaction': 'Tên trong giao dịch khác tên đầy đủ trong mẫu đã học; cần kiểm tra thủ công.',
+        'Full name entities could not be verified': 'Chưa đối chiếu được tên đầy đủ trong cả giao dịch và mẫu đã học; cần kiểm tra thủ công.',
         'Multiple customer IDs require manual allocation': 'Có nhiều mã khách hàng trong cùng giao dịch; cần phân bổ và kiểm tra thủ công.',
         'Unknown or conflicting water contract requires manual check': 'Hợp đồng cấp nước chưa có bằng chứng khách hàng phù hợp trong lịch sử; cần kiểm tra thủ công.',
         'Exact water contract and ordered template evidence': 'Mã hợp đồng trùng chính xác; mẫu nội dung và vị trí số khớp với lịch sử đã xác nhận.',
@@ -254,6 +256,39 @@ class Core:
 
     def extract_names(self, raw):
         return name_fields(self.name_extractor.extract(raw)) if self.name_extractor else structured_name_fields(raw)
+
+    def compare_names(self, extracted, historical_raw, saved=None):
+        historical = name_fields(saved) if saved and saved.get('entities') else self.extract_names(historical_raw)
+        return compare_entity_names(extracted['extracted_names'], historical['extracted_names'])
+
+    def shared_collection_template(self, session, norm, payer, names):
+        """Verify a bank/provider layout independently of the customer's own patterns.
+
+        The customer ID identifies the recipient; another confirmed recipient can
+        supply the shared layout. A settlement roster never identifies one recipient.
+        """
+        shapes = {shared_shape(norm), shared_shape(norm, names)}
+        keys = {shared_key(shape, norm.structure, payer) for shape in shapes}
+        templates = session.scalars(select(PaymentTemplate).where(
+            PaymentTemplate.fingerprint.in_(keys), PaymentTemplate.channel_key == channel_key(payer),
+            PaymentTemplate.max_transfer_customers < BATCH_MIN_CUSTOMERS).order_by(PaymentTemplate.id))
+        for template in templates:
+            if template.template_text not in shapes or template.structure != norm.structure:
+                continue
+            # Require a confirmed example in which this layout's ID really is the
+            # approved recipient, rather than a merely mentioned, differently labelled ID.
+            examples = session.scalars(select(Pattern).where(
+                Pattern.template_id == template.id, Pattern.channel_key == channel_key(payer),
+                (Pattern.payment_mode == 'proxy') |
+                ((Pattern.payment_mode == 'unknown') & (template.payment_mode == 'proxy'))
+                ).order_by(Pattern.id).execution_options(yield_per=100))
+            for example in examples:
+                historical = self.normalize(example.raw_example)
+                self.apply_learned_slots(session, historical, payer)
+                if (historical.customer_ids == [example.customer_id] and
+                        not any(n.get('learned_non_id') and n['numeric_type'] == 'CUSTOMER_ID' for n in historical.numbers)):
+                    return template, example
+        return None
 
     def learning_alias_signature(self):
         names = self.name_extractor.learning_signature() if self.name_extractor else 'bank-name-alias-v1'
@@ -822,13 +857,22 @@ class Core:
                     'reason_vi': '; '.join(result[0]['sources'])}
         return result
 
-    def recommendation_group(self, session, raw, payer, *, names=(), suggestions=None, q='', offset=0, limit=6):
+    def recommendation_group(self, session, raw, payer, *, names=(), suggestions=None, q='', offset=0, limit=6,
+                             include_examples=False):
         payer = resolve_channel(session, payer)
         norm = self.normalize(raw)
         self.apply_learned_slots(session, norm, payer)
         if suggestions is None:
             suggestions = self.recommend_customers(session, norm, payer, {'extracted_names': list(names)})
-        return candidate_group(session, norm, payer, names, suggestions=suggestions, q=q, offset=offset, limit=limit)
+        group = candidate_group(session, norm, payer, names, suggestions=suggestions, q=q, offset=offset, limit=limit)
+        if include_examples:
+            attach_examples(session, norm, payer, group['members'])
+            for member in group['members']:
+                for example in member['examples']:
+                    if example['kind'] != 'collection':
+                        historical = self.normalize(example['content'])
+                        example['numeric_comparison'] = compare_ordered_numbers(norm, historical.segments, historical.template)
+        return group
 
     def classify(self, session, raw, payer='BIDV', *, payment_mode='', provider_kind='', provider_name=''):
         self.check_model(session)
@@ -918,6 +962,15 @@ class Core:
                      effective_route['payment_mode'] == 'unknown' and route_evidence.get('suggested_mode') == 'proxy')
             template = session.get(PaymentTemplate, pattern.template_id)
             settlement = (template.max_transfer_customers or 1) >= BATCH_MIN_CUSTOMERS and unique_transfer_reference(norm)
+            name_comparison = None
+            if not norm.customer_ids and not recurrence['identity_anchor']:
+                name_comparison = self.compare_names(extracted, link.raw_example,
+                    (link.signature or {}).get('name_extraction'))
+                if name_comparison['status'] == 'mismatch':
+                    return manual('Full name entities differ from the historical transaction',
+                                  name_entity_comparison=name_comparison)
+                # With unavailable NER, exact stable text still preserves every name
+                # word. Keep that proven memory path; fuzzy matching below needs names.
             if (recurrence['owner_count'] == 1 and recurrence['sample_valid'] and recurrence['personal'] and not recurrence['blocked_customer_ids'] and not code_conflict and not settlement
                     and (not proxy or recurrence['identity_anchor'])):
                 history = self.normalize(link.raw_example)
@@ -938,6 +991,7 @@ class Core:
                         'reason_vi': route_evidence.get('reason_vi') if payment_mode else
                             'Nhận lại mẫu riêng đã được xác nhận trong lịch sử.'},
                     'evidence': {'reason': reason, 'reason_vi': reason, 'confirmed_recurrence': recurrence_summary,
+                        'name_entity_comparison': name_comparison,
                         'matched_pattern_id': pattern.id, 'matched_pattern': link.raw_example,
                         'matched_template': history.template, 'query_template': norm.template,
                         'pattern_source': {'file': link.source_file, 'row': link.source_row, 'date': link.example_date},
@@ -1036,7 +1090,7 @@ class Core:
                     known_customers = {registered.id}
                     registry_customer = registered
             if registry_customer is None and not known_customers:
-                detail = (f'Mã đề xuất {value} – {registered.canonical_name} (có trong danh sách khách hàng, chưa có mẫu chuyển khoản riêng; đọc từ {source}).'
+                detail = (f'Mã đề xuất {value} – {registered.canonical_name} (có trong danh sách khách hàng đã học; đọc từ {source}).'
                           if registered else f'Mã đề xuất {value} (đọc từ {source}); kiểm tra rồi xác nhận để học khách hàng mới.')
                 return manual('Registered customer needs confirmation of payment purpose' if registered else
                               'Customer ID is absent from confirmed knowledge; confidence is 0%; manual check required', detail,
@@ -1066,7 +1120,8 @@ class Core:
                                  if owners and not (customer_scope and token.startswith('contract:'))]
         compatible_owners = set.intersection(*ownership_constraints) if ownership_constraints else None
         ownership_evidence = {token: sorted(owners) for token, owners in identity_owners.items() if owners}
-        if compatible_owners is not None and not compatible_owners:
+        if compatible_owners is not None and (not compatible_owners or
+                registry_customer is not None and registry_customer.id not in compatible_owners):
             return manual('Conflicting confirmed identifiers require manual check', unknown_customer=False,
                           confirmed_identifier_owners=ownership_evidence)
         vector = self.embedder.encode(norm.semantic_text)
@@ -1075,10 +1130,45 @@ class Core:
                                                   customer_scope=customer_scope, with_trace=True,
                                                   extracted_names=extracted['extracted_names'])
         if not candidates and registry_customer is not None:
-            # Registry/roster membership confirms a customer exists, not the interpretation
-            # of a new payment layout. One human confirmation supplies the missing pattern.
+            # Compact collection learning retains shared membership instead of an
+            # individual vector. A confirmed shared layout is equally valid evidence.
             if compatible_owners is None or registry_customer.id in compatible_owners:
-                return manual('Mã khách hàng có trong danh sách đã học nhưng chưa có mẫu thanh toán riêng để kiểm chứng. Cần xác nhận lần này.',
+                blocked_registry = session.scalar(select(HardNegative.id).where(
+                    HardNegative.customer_id == registry_customer.id,
+                    HardNegative.transaction_fingerprint.in_((fingerprint(norm.normalized),
+                        recurring_negative_key(recurring_signature(norm, payer)[0])))).limit(1))
+                if blocked_registry is not None:
+                    return manual('Human feedback previously rejected this customer for this transaction')
+                shared = self.shared_collection_template(session, norm, payer, extracted['extracted_names'])
+                membership = session.scalar(select(CollectionMember.id).where(
+                    CollectionMember.customer_id == registry_customer.id).limit(1))
+                if shared and membership is not None:
+                    template, example = shared
+                    reason = 'IDKH trùng khách hàng đã học; bố cục khớp mẫu thu hộ dùng chung của ngân hàng/kênh thanh toán.'
+                    score = .97
+                    if not payment_mode and route['payment_mode'] == 'unknown':
+                        source = example if example.payment_mode == 'proxy' else template
+                        route = {key: getattr(source, key) for key in ('payment_mode', 'provider_kind', 'provider_name')}
+                        route_evidence = {'source': 'shared_template', 'reason_vi': 'Kiểu thanh toán từ mẫu thu hộ dùng chung đã học.'}
+                    return {'customer_id': registry_customer.id, 'customer_name': registry_customer.canonical_name,
+                        'score': score, 'decision': 'auto_accept' if score >= self.auto_threshold else 'review',
+                        'normalization': norm.dict(), **extracted, **route, 'payment_mode_evidence': route_evidence,
+                        'recommendations': [{'customer_id': registry_customer.id,
+                            'customer_name': registry_customer.canonical_name, 'score': score,
+                            'sources': ['IDKH đã học và mẫu thu hộ dùng chung']}], 'alternatives': [],
+                        'evidence': {'reason': reason, 'reason_vi': reason, 'shared_collection_match': True,
+                            'explicit_customer_id': True, 'numeric_customer_evidence': True,
+                            'customer_id_source': 'learned_slot' if learned_ids else 'rule',
+                            'detected_customer_ids': norm.customer_ids, 'learned_customer_ids': learned_ids,
+                            'shared_template_id': template.id, 'shared_template': template.template_text,
+                            'matched_template': template.template_text, 'query_template': shared_shape(norm, extracted['extracted_names']),
+                            'matched_channel': payer, 'confirmed_identifier_owners': ownership_evidence,
+                            'shared_example_customer_id': example.customer_id,
+                            'match_steps_vi': ['IDKH trùng khách hàng đã được xác nhận trong dữ liệu thu hộ.',
+                                'Đối chiếu bố cục với mẫu thu hộ cùng ngân hàng/kênh đã học từ khách hàng khác.',
+                                'Không yêu cầu mẫu riêng; không gán khách hàng của ví dụ dùng chung cho giao dịch này.'],
+                            'retrieval': retrieval_trace}}
+                return manual('IDKH có trong dữ liệu đã học; chưa đối chiếu được bố cục giao dịch với mẫu đã xác nhận của ngân hàng/kênh này.',
                     recommendations=[{'customer_id': registry_customer.id, 'customer_name': registry_customer.canonical_name,
                                       'score': .55, 'sources': ['Mã khách hàng có trong danh sách đã duyệt']}],
                     registry_only_customer=True, explicit_customer_id=True,
@@ -1093,9 +1183,11 @@ class Core:
             aliases[alias.customer_id].append(alias.normalized_alias)
             if alias.confidence >= 1.0:
                 trusted_aliases[alias.customer_id].append(alias.normalized_alias)
+        extracted_name_keys = {name_key(name) for name in extracted['extracted_names']}
         names_in_content = {alias for names in trusted_aliases.values() for alias in names
                             if len(alias) > 3 and any(char.isalpha() for char in alias)
-                            and re.search(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', norm.normalized)}
+                            and (name_key(alias) in extracted_name_keys if extracted_name_keys else
+                                 re.search(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', norm.normalized))}
         alias_owners = defaultdict(set)
         if names_in_content:
             # Check the whole knowledge, even when another owner was not retrieved.
@@ -1103,6 +1195,16 @@ class Core:
                     Alias.normalized_alias.in_(names_in_content))):
                 alias_owners[alias].add(owner)
         pattern_ids = [p.id for p in candidates]
+        saved_names = {}
+        if not norm.customer_ids:
+            # Reuse NER saved for this exact example, not an alias of the owner or
+            # a different observation aggregated into the same pattern.
+            for pid, signature_data in session.execute(select(RecurringLink.pattern_id, RecurringLink.signature)
+                    .join(Pattern, Pattern.id == RecurringLink.pattern_id).where(
+                        RecurringLink.pattern_id.in_(pattern_ids), RecurringLink.customer_id == Pattern.customer_id,
+                        RecurringLink.raw_example == Pattern.raw_example).order_by(RecurringLink.id.desc())):
+                if (signature_data or {}).get('name_extraction', {}).get('entities'):
+                    saved_names.setdefault(pid, signature_data['name_extraction'])
         template_ids = {pattern.template_id for pattern in candidates}
         template_counts = dict(session.execute(select(Pattern.template_id, func.count(func.distinct(Pattern.customer_id)))
             .where(Pattern.template_id.in_(template_ids)).group_by(Pattern.template_id)).all())
@@ -1256,6 +1358,14 @@ class Core:
                 score = min(score, guard_cap)
                 reason = 'Unknown payment route requires exact customer-specific numeric evidence'
                 identifier_guards.append(reason)
+            name_comparison = None
+            if not norm.customer_ids and not numeric_customer_evidence:
+                name_comparison = self.compare_names(extracted, pattern.raw_example, saved_names.get(pattern.id))
+                if name_comparison['status'] != 'match':
+                    score = min(score, guard_cap)
+                    reason = ('Full name entities differ from the historical transaction'
+                              if name_comparison['status'] == 'mismatch' else 'Full name entities could not be verified')
+                    identifier_guards.append(reason)
             if customer.id in blocked:
                 score = 0
                 reason = 'Human feedback previously rejected this customer for this transaction'
@@ -1277,6 +1387,7 @@ class Core:
                                                   'date': pattern.example_date},
                                'matched_template': pattern.template_text, 'matched_aliases': alias_matches,
                                'matched_extracted_names': matched_extracted_names,
+                               'name_entity_comparison': name_comparison,
                                'unique_confirmed_aliases': unique_alias_matches,
                                'alias_owners': {alias: sorted(alias_owners[alias]) for alias in alias_matches},
                                'shared_template_id': pattern.template_id,
@@ -1358,6 +1469,8 @@ class Core:
                              'Unmatched confirmed customer number requires manual check',
                              'Shared or proxy template requires exact customer-specific numeric evidence',
                              'Unknown payment route requires exact customer-specific numeric evidence',
+                             'Full name entities differ from the historical transaction',
+                             'Full name entities could not be verified',
                              'Conflicting confirmed identifiers require manual check'}
             manual_reason = best['evidence']['reason'] if best['evidence']['reason'] in guard_reasons else \
                 'Historical candidates do not identify this customer reliably; confidence is 0%; manual check required'

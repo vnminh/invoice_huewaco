@@ -1024,7 +1024,8 @@ def create_app(engine=None, core=None, runtime_dir=None, access_policy=None):
             raise HTTPException(404, str(error)) from error
         with factory() as session:
             return core.recommendation_group(session, row['raw'], row.get('payer', 'unknown'),
-                names=row.get('extracted_names', []), suggestions=row.get('recommendations'), q=q, offset=offset, limit=limit)
+                names=row.get('extracted_names', []), suggestions=row.get('recommendations'), q=q, offset=offset, limit=limit,
+                include_examples=True)
 
     @api.post('/feedback/batch')
     def bulk_feedback(body: BulkFeedbackInput):

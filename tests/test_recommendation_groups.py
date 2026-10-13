@@ -2,7 +2,7 @@
 from sqlalchemy import func, select
 
 from app.core import Core, fingerprint
-from app.db import Customer, HardNegative, Pattern
+from app.db import Customer, HardNegative, Pattern, RecurringLink
 from app.excel import ExcelTransaction
 
 
@@ -120,3 +120,83 @@ def test_context_does_not_discard_individual_evidence_from_another_layout_or_ban
         assert group['members'][0]['sources'] == suggestion[0]['sources']
         unknown = core.recommendation_group(session, 'Thanh toan tien nuoc', 'unknown', suggestions=suggestion)
         assert unknown['kind'] == 'individual' and unknown['total'] == 1
+
+
+def test_visible_group_examples_are_customer_owned_and_do_not_change_decision(db):
+    _, factory = db
+    core = Core()
+    with factory.begin() as session:
+        for cid, name in [('001234', 'Nguyen Van An'), ('005678', 'Tran Van Binh')]:
+            core.learn(session, ExcelTransaction(7, f'{name} nop tien nuoc', payer='BIDV',
+                source=f'{cid}.xlsx [BIDV]', date='2026-07-01'), cid, name)
+        learn(core, session, '009999', 'Mau khong thuoc trang nay', 'VCB')
+    with factory() as session:
+        raw = 'Noi dung moi chua tung gap'
+        before = core.classify(session, raw, 'BIDV')
+        group = core.recommendation_group(session, raw, 'BIDV', include_examples=True)
+        assert {m['customer_id'] for m in group['members']} == {'001234', '005678'}
+        for member in group['members']:
+            example = member['examples'][0]
+            assert session.get(Pattern, example['pattern_id']).customer_id == member['customer_id']
+            assert example['source_file'] == f"{member['customer_id']}.xlsx [BIDV]"
+            assert example['source_row'] == 7 and example['example_date'] == '2026-07-01'
+            assert example['content'].endswith('nop tien nuoc')
+            assert 'numeric_comparison' in example
+        assert core.classify(session, raw, 'BIDV') == before
+        plain = core.recommendation_group(session, raw, 'BIDV')
+        assert all('examples' not in member for member in plain['members'])
+
+
+def test_exact_recurring_example_precedes_a_patterns_other_example(db):
+    _, factory = db
+    core = Core()
+    raw = 'Nguyen Van An tien nuoc ky 08/2026'
+    with factory.begin() as session:
+        learn(core, session, '001234', raw)
+        pattern = session.scalar(select(Pattern))
+        memory = session.scalar(select(RecurringLink))
+        memory.source_file, memory.source_row = 'approved.csv', 12
+        # A pattern aggregates examples; its first memo need not be the exact memory hit.
+        pattern.raw_example = 'Nguyen Van An noi dung cu'
+    with factory() as session:
+        group = core.recommendation_group(session, raw.replace('08/', '09/'), 'BIDV', include_examples=True)
+        first = group['members'][0]['examples'][0]
+        assert first['kind'] == 'recurring' and first['content'] == raw
+        assert first['source_file'] == 'approved.csv' and first['source_row'] == 12
+        assert len(group['members'][0]['examples']) <= 3
+
+
+def test_collection_examples_show_shared_layout_without_inventing_personal_memos(db):
+    _, factory = db
+    core = Core()
+    raw = 'Quyet toan giao dich FT20260913123456'
+    with factory.begin() as session:
+        for cid in ('001234', '005678'):
+            core.learn_settlement(session, ExcelTransaction(1, raw, payer='MOMO'), cid, '', 20)
+    with factory() as session:
+        group = core.recommendation_group(session, raw, 'MOMO', include_examples=True)
+        assert len(group['members']) == 2
+        for member in group['members']:
+            example, = member['examples']
+            assert example['kind'] == 'collection'
+            assert example['content'] and '<NUM_' in example['content']
+            assert not example['source_file'] and example['source_row'] is None
+            assert 'pattern_id' not in example and 'numeric_comparison' not in example
+
+
+def test_examples_are_limited_per_customer_after_group_pagination(db):
+    _, factory = db
+    core = Core()
+    with factory.begin() as session:
+        for cid in ('001234', '005678'):
+            for index in range(8):
+                learn(core, session, cid, f'Nguoi tra {cid} HD {200000 + index} tien nuoc')
+    with factory() as session:
+        first = core.recommendation_group(session, 'Noi dung moi', 'BIDV', include_examples=True, limit=1)
+        second = core.recommendation_group(session, 'Noi dung moi', 'BIDV', include_examples=True, limit=1, offset=1)
+        assert first['total'] == second['total'] == 2
+        assert first['members'][0]['customer_id'] != second['members'][0]['customer_id']
+        for group in (first, second):
+            member, = group['members']
+            assert len(member['examples']) == 3
+            assert all(session.get(Pattern, e['pattern_id']).customer_id == member['customer_id'] for e in member['examples'])

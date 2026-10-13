@@ -4,11 +4,88 @@ import re
 
 from sqlalchemy import case, func, literal, or_, select, union_all
 
-from .db import Alias, CollectionMember, Customer, HardNegative, Pattern, PaymentTemplate
+from .db import Alias, CollectionMember, Customer, HardNegative, Pattern, PaymentTemplate, RecurringLink
 from .identifiers import channel_key
 from .payment_templates import shared_key, shared_shape
 from .text import fold
 from .recurring import owner_query as recurring_owners, negative_key as recurring_negative, signature as recurring_signature
+
+
+def attach_examples(session, norm, payer, members):
+    """Fetch evidence only for a visible page; never use it to change match decisions.
+
+    Window queries bound each customer's examples without an N+1 query or a
+    global limit that could hide other customers. Every example is owned by the
+    displayed customer; collection memberships expose a layout, not a personal memo.
+    """
+    by_customer = {member['customer_id']: member for member in members}
+    if not by_customer:
+        return
+    for member in members:
+        member['examples'] = []
+    channel = channel_key(payer)
+    digest, _ = recurring_signature(norm, channel)
+
+    def add(cid, example):
+        examples = by_customer[cid]['examples']
+        if len(examples) < 3 and not any(
+                (old['kind'] == 'collection') == (example['kind'] == 'collection')
+                and old['content'] == example['content'] and old['channel'] == example['channel']
+                for old in examples):
+            examples.append(example)
+
+    # The exact remembered observation may differ from the pattern's first example.
+    ranked_memory = select(RecurringLink.id, func.row_number().over(
+        partition_by=RecurringLink.customer_id,
+        order_by=(RecurringLink.last_seen.desc(), RecurringLink.id.desc())).label('rank')) \
+        .join(Pattern, Pattern.id == RecurringLink.pattern_id).where(
+            RecurringLink.customer_id.in_(by_customer), Pattern.customer_id == RecurringLink.customer_id,
+            Pattern.channel_key == RecurringLink.channel_key, RecurringLink.channel_key == channel,
+            RecurringLink.signature_hash == digest).subquery()
+    for memory, pattern in session.execute(select(RecurringLink, Pattern)
+            .join(ranked_memory, ranked_memory.c.id == RecurringLink.id)
+            .join(Pattern, Pattern.id == RecurringLink.pattern_id).where(ranked_memory.c.rank <= 1)):
+        add(memory.customer_id, {'kind': 'recurring', 'pattern_id': pattern.id,
+            'content': memory.raw_example, 'channel': memory.channel_key,
+            'payment_mode': pattern.payment_mode, 'source_file': memory.source_file,
+            'source_row': memory.source_row, 'example_date': memory.example_date,
+            'reasons': ['Nội dung ổn định từng được xác nhận cho khách hàng']})
+
+    ranked_patterns = select(Pattern.id, func.row_number().over(partition_by=Pattern.customer_id,
+        order_by=((Pattern.normalized_text == norm.normalized).desc(),
+                  (Pattern.template_text == norm.template).desc(), (Pattern.channel_key == channel).desc(),
+                  Pattern.last_seen.desc(), Pattern.id.desc())).label('rank')) \
+        .where(Pattern.customer_id.in_(by_customer)).subquery()
+    for pattern in session.scalars(select(Pattern).join(ranked_patterns, ranked_patterns.c.id == Pattern.id)
+            .where(ranked_patterns.c.rank <= 3).order_by(Pattern.customer_id, ranked_patterns.c.rank)):
+        reasons = []
+        if pattern.normalized_text == norm.normalized:
+            reasons.append('Nội dung chuẩn hóa trùng lịch sử')
+        elif pattern.template_text == norm.template:
+            reasons.append('Cùng bố cục nội dung')
+        if pattern.channel_key == channel:
+            reasons.append('Cùng ngân hàng / kênh thanh toán')
+        add(pattern.customer_id, {'kind': 'pattern', 'pattern_id': pattern.id,
+            'content': pattern.raw_example, 'channel': pattern.channel_key,
+            'payment_mode': pattern.payment_mode, 'source_file': pattern.source_file,
+            'source_row': pattern.source_row, 'example_date': pattern.example_date,
+            'reasons': reasons or ['Mẫu đã học của khách hàng']})
+
+    ranked_collections = select(CollectionMember.id, func.row_number().over(
+        partition_by=CollectionMember.customer_id,
+        order_by=((PaymentTemplate.template_text == norm.template).desc(),
+                  (PaymentTemplate.channel_key == channel).desc(), CollectionMember.last_seen.desc(),
+                  CollectionMember.id.desc())).label('rank')) \
+        .join(PaymentTemplate, PaymentTemplate.id == CollectionMember.template_id) \
+        .where(CollectionMember.customer_id.in_(by_customer)).subquery()
+    for member, template in session.execute(select(CollectionMember, PaymentTemplate)
+            .join(PaymentTemplate, PaymentTemplate.id == CollectionMember.template_id)
+            .join(ranked_collections, ranked_collections.c.id == CollectionMember.id)
+            .where(ranked_collections.c.rank <= 3).order_by(CollectionMember.customer_id, ranked_collections.c.rank)):
+        add(member.customer_id, {'kind': 'collection', 'template_id': template.id,
+            'content': template.template_text, 'channel': template.channel_key,
+            'payment_mode': template.payment_mode, 'source_file': '', 'source_row': None, 'example_date': '',
+            'reasons': ['Khách hàng từng có trong danh sách thu hộ của mẫu này']})
 
 
 def candidate_group(session, norm, payer, extracted_names=(), *, suggestions=(), q='', offset=0, limit=6):

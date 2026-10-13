@@ -202,6 +202,11 @@ def test_transaction_group_search_is_read_only_authenticated_and_not_bulk_accept
     assert client.get(path, auth=('bad','bad')).status_code == 401
     group = client.get(path).json()
     assert group['total'] == 1 and group['members'][0]['customer_id'] == '001234'
+    example = group['members'][0]['examples'][0]
+    assert example['content'] == 'TT tien nuoc KH 001234 Nguyen Van A'
+    assert example['numeric_comparison']['ordered_comparison'][0]['query_value'] == '009999'
+    assert example['numeric_comparison']['ordered_comparison'][0]['history_value'] == '001234'
+    assert not example['numeric_comparison']['ordered_comparison'][0]['exact']
     assert client.get(path, params={'q':'001234'}).json()['total'] == 1
     assert client.get(path, params={'q':"%' OR 1=1;--"}).json()['total'] == 0
     assert client.get(path, params={'limit':100000}).status_code == 422

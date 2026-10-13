@@ -103,6 +103,6 @@ Database mới: chỉ [sql/create_current.sql](../sql/create_current.sql). Kho �
 
 Benchmark dùng SQLite mới riêng, embedding E5 đã cache, tệp lịch sử để học và tệp kỳ sau chỉ để đánh giá. Không đọc `.env`, không chạm PostgreSQL. Báo cáo và giới hạn phép đo ở [interactive-benchmark.md](interactive-benchmark.md). Không dùng precision của vài chục kết quả đúng để khẳng định precision toàn bộ vận hành.
 
-Khách hàng chỉ có trong registry/roster, chưa có mẫu thanh toán riêng phù hợp, được gợi ý với điểm thấp và yêu cầu duyệt; không tự ghép chỉ vì IDKH có tồn tại. Xác nhận của người dùng bổ sung mẫu riêng để lần sau có căn cứ đối chiếu.
+Khách hàng đã học qua danh sách thu hộ không bắt buộc có mẫu riêng. IDKH trùng chính xác, mục đích tiền nước và mẫu thu hộ dùng chung đã kiểm chứng cùng ngân hàng/kênh cũng đủ làm căn cứ đối soát, kể cả mẫu được học từ khách hàng khác. Nếu chưa có mẫu riêng hoặc mẫu dùng chung phù hợp thì vẫn gợi ý để duyệt; không tự chọn người từ một danh sách thu hộ không có định danh. Xem [điều kiện đối soát](matching-and-learning.md).
 
 Bảng `recurring_links` hiển thị dưới tên **Nội dung đã xác nhận**, cho xem/tìm kiếm ví dụ kiến thức. Không có API sửa trực tiếp chữ ký để tránh tạo bằng chứng giả. Xóa/sửa liên kết mẫu là thao tác nghiệp vụ có xác nhận; học thêm giữ các ví dụ cũ. Xem [nhận lại mẫu](recurring-recognition.md).

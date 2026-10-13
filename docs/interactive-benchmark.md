@@ -39,6 +39,8 @@ Kho chỉ có kỳ học `2026-07`. Dung lượng/thời gian trên gồm toàn 
 
 Đã đổi thành **gợi ý cần duyệt** khi khách hàng chỉ có trong registry/roster và chưa có mẫu riêng đối chiếu. Không bỏ gợi ý; một lần người dùng xác nhận sẽ học mẫu riêng để lần sau có căn cứ. Kiểm tra hồi quy bao phủ cả chu trình này.
 
+Ghi chú phiên bản: số đo dưới đây mô tả phiên bản tại thời điểm benchmark. Bản hiện tại bổ sung đối chiếu mẫu thu hộ dùng chung cùng ngân hàng/kênh cho khách hàng đã học qua bảng kê; không còn bắt buộc mẫu riêng. Vẫn không tự ghép chỉ từ IDKH tồn tại và câu tiền nước nếu thiếu mẫu phù hợp. Xem điều kiện trong [tài liệu so khớp](matching-and-learning.md); các số đo cũ không phải benchmark của thay đổi này.
+
 | Lần đo trên 1.000 dòng validation | Tự chấp nhận đúng | Tự chấp nhận sai | Precision | Recall | F1 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Học BIDV lịch sử, trước sửa guard | 45 | 0 | 100% | 5,073% | 0,09657 |

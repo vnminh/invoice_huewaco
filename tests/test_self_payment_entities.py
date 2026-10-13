@@ -1,4 +1,5 @@
 """Confirmed self-payments do not need an ID in their narrative to be learned."""
+import pytest
 from sqlalchemy import func, select
 
 from app.core import Core
@@ -115,3 +116,101 @@ def test_self_payment_without_any_extracted_entity_is_still_saved(db):
     with factory() as session:
         assert session.scalar(select(Pattern)).payment_mode == 'self'
         assert session.scalar(select(RecurringLink)).signature['name_extraction']['entities'] == []
+
+
+class PerfectSemanticVectors:
+    """Worst case: embedding similarity cannot detect the changed name."""
+    name = 'test-perfect-semantic'
+
+    def encode(self, _):
+        return [1.0] + [0.0] * 383
+
+    def prepare(self, _):
+        pass
+
+
+def named_payment(name, *, account=True, period='07/2026'):
+    return ('TKThe:107873404892 tai ICBVVNVX. ' if account else '') + name + \
+        f' thanh toan tien nuoc sinh hoat hang thang cho gia dinh ky {period}'
+
+
+@pytest.mark.parametrize('historical,current', [
+    ('NGUYEN THI THUY', 'NGUYEN THI KIM THUY'),
+    ('NGUYEN THI KIM THUY', 'NGUYEN THI THUY'),
+    ('NGUYEN THI THUY', 'NGUYEN THUY THI'),
+    ('NGUYEN THI THUY', 'NGUYEN THI THUY AN'),
+])
+@pytest.mark.parametrize('account', [True, False])
+def test_different_full_names_block_no_id_matching_even_with_perfect_vectors(db, historical, current, account):
+    _, factory = db
+    # Longest span only, so a shorter entity cannot also be returned inside a longer name.
+    extractor = ner(historical)
+    core = Core(embedder=PerfectSemanticVectors(), name_extractor=extractor,
+                auto_threshold=.3, review_threshold=.2)
+    old = named_payment(historical, account=account)
+    new = named_payment(current, account=account, period='08/2026')
+    with factory.begin() as session:
+        core.learn(session, ExcelTransaction(1, old, payment_mode='self'), '001234', current)
+    # Use current entities after a restart; historical entities come from the saved observation.
+    core.name_extractor = ner(current)
+    with factory() as session:
+        result = core.classify(session, new)
+        assert result['normalization']['customer_ids'] == []
+        assert result['decision'] == 'manual_check'
+        assert result['score'] < core.review_threshold
+        comparison = result['evidence']['nearest_history']['name_entity_comparison']
+        assert comparison == {'status': 'mismatch', 'query_names': [current], 'history_names': [historical]}
+        assert result['evidence']['reason'] == 'Full name entities differ from the historical transaction'
+
+
+def test_full_name_match_allows_supporting_account_evidence_with_changed_wording(db):
+    _, factory = db
+    old = named_payment('NGUYEN THI THUY')
+    new = named_payment('Nguyễn Thị Thuỷ', period='08/2026').replace('hang thang', 'dinh ky')
+    core = Core(embedder=PerfectSemanticVectors(), name_extractor=ner('NGUYEN THI THUY', 'Nguyễn Thị Thuỷ'))
+    with factory.begin() as session:
+        core.learn(session, ExcelTransaction(1, old, payment_mode='self'), '001234')
+    with factory() as session:
+        result = core.classify(session, new)
+        assert result['decision'] == 'auto_accept'
+        assert result['evidence']['name_entity_comparison']['status'] == 'match'
+        assert not result['evidence'].get('memory_lookup')
+
+
+def test_missing_ner_cannot_use_fuzzy_account_match_but_exact_memory_survives(db):
+    _, factory = db
+    core = Core(embedder=PerfectSemanticVectors(), name_extractor=ner('NGUYEN THI THUY'))
+    old = named_payment('NGUYEN THI THUY')
+    with factory.begin() as session:
+        core.learn(session, ExcelTransaction(1, old, payment_mode='self'), '001234')
+    core.name_extractor = ner()
+    with factory() as session:
+        wrong = core.classify(session, named_payment('NGUYEN THI KIM THUY', period='08/2026'))
+        assert wrong['decision'] == 'manual_check'
+        assert wrong['evidence']['nearest_history']['name_entity_comparison']['status'] == 'missing'
+        same = core.classify(session, old.replace('07/2026', '08/2026'))
+        assert same['decision'] == 'auto_accept' and same['evidence']['memory_lookup']
+
+
+def test_explicit_customer_id_keeps_priority_over_changed_payer_name(db):
+    _, factory = db
+    core = Core(embedder=PerfectSemanticVectors(), name_extractor=ner('NGUYEN THI THUY', 'NGUYEN THI KIM THUY'))
+    old = named_payment('NGUYEN THI THUY') + ' Ma KH 001234'
+    with factory.begin() as session:
+        core.learn(session, ExcelTransaction(1, old, payment_mode='self'), '001234')
+    with factory() as session:
+        result = core.classify(session, old.replace('NGUYEN THI THUY', 'NGUYEN THI KIM THUY'))
+        assert result['decision'] == 'auto_accept' and result['customer_id'] == '001234'
+
+
+def test_human_can_confirm_both_name_variants_without_erasing_old_memory(db):
+    _, factory = db
+    core = Core(name_extractor=ner('NGUYEN THI THUY', 'NGUYEN THI KIM THUY'))
+    variants = [named_payment(name, account=False) for name in ('NGUYEN THI THUY', 'NGUYEN THI KIM THUY')]
+    with factory.begin() as session:
+        for raw in variants:
+            core.learn(session, ExcelTransaction(1, raw, payment_mode='self'), '001234')
+    with factory() as session:
+        assert session.scalar(select(func.count(RecurringLink.id))) == 2
+        for raw in variants:
+            assert core.classify(session, raw.replace('07/2026', '08/2026'))['decision'] == 'auto_accept'

@@ -51,6 +51,10 @@ Kết quả `manual_check` thêm `candidate_group`:
 
 Trong **Kiểm tra giao dịch**, mở **Nhóm khách hàng cần kiểm tra** để tìm kiếm, chuyển trang và bấm **Chọn**. Nút này chỉ điền form; **Xác nhận & học** mới lưu liên kết được duyệt. Nhóm một người vẫn không tự chuyển sang chấp nhận; nhóm yếu cũng không đủ điều kiện xác nhận hàng loạt.
 
+Mỗi khách hàng trên trang đang xem có tối đa ba mẫu để đối chiếu: nội dung đã xác nhận, ngân hàng/kênh, kiểu thanh toán, ngày giao dịch mẫu và tệp/dòng nguồn nếu có. Quan sát trong `recurring_links` khớp nội dung ổn định được ưu tiên trước; sau đó là các mẫu cùng nội dung chuẩn hóa, bố cục, ngân hàng và thời điểm cập nhật. **So với giao dịch này** mở nội dung hiện tại và bảng so số theo thứ tự. **Xem mẫu** cạnh gợi ý cá nhân mở nhóm và tìm khách hàng đó.
+
+Với `collection_memberships`, giao diện chỉ hiển thị **Bố cục thu hộ tổng hợp**, không trình bày bố cục này như nội dung riêng đã xác nhận cho một khách hàng. Nếu hồ sơ chưa có mẫu, giao diện báo rõ. Ví dụ luôn được truy vấn theo đúng chủ sở hữu; giới hạn ba mẫu áp dụng riêng từng khách hàng sau khi phân trang. Chỉ endpoint xem nhóm tải thêm mẫu, không đưa toàn bộ nội dung vào kết quả đối soát hàng loạt. Đây là dữ liệu phục vụ duyệt, không thay đổi điểm hoặc quyết định ghép và không tự học.
+
 UI thể hiện rõ trạng thái:
 
 - Khách hàng chưa có trong kho: **Chưa có lịch sử**; API vẫn giữ điểm 0 và yêu cầu duyệt.

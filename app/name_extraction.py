@@ -20,6 +20,14 @@ def name_key(name):
     return ' '.join(re.findall(r'[a-z]+', fold(name)))
 
 
+def compare_entity_names(query_names, history_names):
+    """Compare complete entities; never use token overlap or substring similarity."""
+    query = {name_key(name) for name in query_names if name_key(name)}
+    history = {name_key(name) for name in history_names if name_key(name)}
+    return {'status': 'missing' if not query or not history else 'match' if query == history else 'mismatch',
+            'query_names': list(query_names), 'history_names': list(history_names)}
+
+
 def bank_name_entities(raw):
     fields = mb_water_fields(raw) or agr_water_fields(raw)
     if not fields or not fields['name']:
