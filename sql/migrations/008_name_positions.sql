@@ -1,6 +1,6 @@
 -- Stop the web service; run manually as owner on a database upgraded through 007. Additive only.
--- Learned name positions are filled by the next knowledge import, or now by running
--- scripts/reindex_knowledge.py (it rebuilds ID and name positions together).
+-- Then fill learned positions from existing knowledge: scripts/rebuild_positions.py
+-- (or they are recounted at the end of the next knowledge import).
 BEGIN;
 SELECT pg_advisory_xact_lock(731026);
 CREATE TABLE IF NOT EXISTS customer_name_slots (

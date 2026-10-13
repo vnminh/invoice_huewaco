@@ -166,3 +166,21 @@ def reindex_knowledge(engine, core, batch_size=200, progress=None):
     from .recurring import rebuild as rebuild_recurring
     memory = rebuild_recurring(engine, batch_size=batch_size)
     return {'patterns_reindexed': count, 'id_slots': slots, 'recurring_memory': memory}
+
+
+def rebuild_positions(engine, check_cancel=None):
+    """Recount learned ID and name positions from the knowledge already stored.
+
+    Light maintenance for existing databases (e.g. after migration 008): reads stored
+    confirmed narratives and names only. Patterns, numbers and embeddings are unchanged,
+    so no semantic model is loaded. Uses the same code as the end of every import.
+    """
+    from .id_slots import rebuild as rebuild_ids
+    from .name_slots import rebuild as rebuild_names
+    with sessions(engine).begin() as session:
+        if engine.dialect.name == 'postgresql':
+            session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+        result = {'id_slots': rebuild_ids(session, check_cancel=check_cancel),
+                  'name_slots': rebuild_names(session, check_cancel=check_cancel)}
+        touch_revision(session)
+    return result

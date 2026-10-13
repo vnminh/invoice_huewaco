@@ -106,3 +106,21 @@ def test_shared_layout_learns_name_position_and_reads_names_ner_misses(db, tmp_p
         assert result['decision'] == 'manual_check'
         comparison = result['evidence'].get('nearest_history', result['evidence']).get('name_entity_comparison')
         assert comparison is None or comparison['status'] == 'mismatch'
+
+
+def test_rebuild_positions_fills_name_slots_for_existing_knowledge(db):
+    from sqlalchemy import func, select
+    from app.db import NameSlotStat
+    from app.maintenance import rebuild_positions
+    engine, factory = db
+    core = Core()
+    for index in range(25):
+        name = f'{FIRST[index % 5]} van {LAST[index // 5]}'
+        learn(core, factory, f'TKThe :64602052{index:05d} tai VBAAVNVX. BIDV;5510000370;{name} tra tien nuoc',
+              f'{300000 + index:06d}', name.title(), row=index + 1)
+    with factory() as session:
+        assert session.scalar(select(func.count(NameSlotStat.id))) == 0  # learned row by row, no import rebuild
+    result = rebuild_positions(engine)
+    assert result['name_slots']['name_positions'] >= 1
+    with factory() as session:
+        assert session.scalar(select(NameSlotStat.hits).where(NameSlotStat.context == 'N10 ;')) == 25
