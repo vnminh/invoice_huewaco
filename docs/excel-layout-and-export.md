@@ -24,7 +24,7 @@ Nội dung cần giữ nguyên, kể cả mã dài và số 0 đầu. Mã khách
 
 Tệp có cột `SOTIEN`/số tiền có dấu vẫn được nhận diện: số dương có dấu `+` là ghi có, số âm là ghi nợ. Số dương không có dấu và không có tiêu đề ghi có rõ ràng cần duyệt thủ công; không tự coi là tiền nhận vào. Mẫu dùng `GHICO/GHINO` để tránh sự không rõ ràng này.
 
-Ngày/số tiền sai hoặc chưa rõ chiều giao dịch vẫn đi vào kiểm tra thủ công 0%. Kỳ thanh toán đọc riêng từ nội dung; không lấy tháng của `NGAY` để thay thế kỳ thiếu.
+Ngày/số tiền sai hoặc chưa rõ chiều giao dịch vẫn đi vào kiểm tra thủ công; các gợi ý liên quan được giữ với điểm thấp. Kỳ thanh toán đọc riêng từ nội dung; không lấy tháng của `NGAY` để thay thế kỳ thiếu.
 
 ## Bố cục chuẩn cho học
 
@@ -32,20 +32,20 @@ Bấm **mẫu bố cục** ở khu vực Học dữ liệu mới để xem tiêu
 
 | Tiêu đề | Bắt buộc | Nội dung |
 | --- | --- | --- |
-| `IDKH` | Có | Mã khách hàng đã được kiểm tra; định dạng Text. `ko` được bỏ qua. |
+| `IDKH` | Có | Mã 6 chữ số đã kiểm tra; dạng Text. Nhiều mã phân cách bằng dấu phẩy. `ko` bỏ qua. |
 | `TENKH` | Không | Tên khách hàng do người dùng xác nhận; nếu trống, không suy tên chuẩn mới từ NER. Hồ sơ mới thiếu tên có thể dùng mã làm tên tạm. |
 | `NOIDUNG` | Có | Giao dịch nguyên văn thuộc đúng mã khách hàng được xác nhận. |
 | `NGAY` | Không | Ngày giờ chuyển tiền để theo dõi lần học; không phải kỳ hóa đơn. |
-| `SOTIEN` | Không | Số tiền không âm; để trống thì 0. |
-| `NGANHANG` | Không | Ngân hàng/kênh trả tiền; nếu trống dùng tên sheet. |
+| `SOTIEN` | Không | Số tiền hữu hạn, không âm; trống là 0. CSV hỗ trợ cách ghi số Việt như `1.234.567` hoặc `1.234.567,50` (đặt trong dấu nháy nếu có dấu phẩy). |
+| `NGANHANG` | Không | Ngân hàng/kênh trả tiền; Excel trống dùng tên sheet, CSV thiếu cả NGANHANG/SHEET thì chưa rõ kênh. |
 | `REFERENCE` | Không | Tham chiếu ngân hàng, dạng Text. |
-| `KIEUTHANHTOAN` | Không | `proxy`, `self`, `unknown`; để trống dùng loại mặc định của mẫu đã được admin xác nhận nếu có. |
+| `KIEUTHANHTOAN` | Không | `proxy`, `self`, `unknown` hoặc nhãn tiếng Việt như Ngân hàng thu hộ, trả qua ví điện tử, người dùng tự chuyển khoản; trống dùng kênh/mẫu khi có căn cứ. |
 | `LOAIDONVITHUHO` | Không | `bank`, `wallet`, `other`, `unknown`. |
 | `DONVITHUHO` | Không | Tên ngân hàng/ví/dịch vụ thu hộ. |
 
 Trong luồng học, NER có thể thêm một tên làm bí danh cho **IDKH đã xác nhận**, không tự suy IDKH hoặc thay tên chuẩn. Có nhiều tên đáng tin thì không tự gắn tất cả vào một khách hàng. Với nội dung có nhiều IDKH, không tự gắn tên trích được vào các hồ sơ; dùng `TENKH` đã kiểm tra cho từng IDKH. Ngày/kỳ tiếp tục được bỏ khỏi đặc trưng so khớp như trước.
 
-Một giao dịch có thể thanh toán cho nhiều khách hàng. Nội dung nhiều IDKH được học bình thường khi mã xác nhận nằm trong danh sách đó. Mỗi dòng có **một IDKH đã xác nhận**; để học cho hai khách hàng, lặp lại nguyên văn `NOIDUNG` ở hai dòng với `IDKH`/`TENKH` tương ứng. Không ghép hai mã vào một giá trị IDKH, không tự chia số tiền, không tự học các mã chưa được xác nhận.
+Một giao dịch có thể thanh toán cho nhiều khách hàng. Nội dung được học theo IDKH đã duyệt, kể cả khi mã không xuất hiện hoặc khác mã được nhắc đến. Có thể lặp lại nội dung ở nhiều dòng, mỗi dòng một IDKH/tên, hoặc ghi nhiều mã trong một ô với dấu phân cách (ví dụ `001234,005678`). Không nối hai mã thành một dãy 12 số, không tự chia tiền và không tự học mã chưa được xác nhận. Nếu dùng một ô nhiều tên, phân cách bằng dấu chấm phẩy theo thứ tự mã; không có đủ tên thì giữ tên hiện có hoặc dùng tên tạm theo mã.
 
 Ví dụ hai dòng sau tạo hai liên kết khách hàng với cùng mẫu; toàn bộ số và thứ tự trong nội dung được giữ:
 
@@ -55,7 +55,7 @@ IDKH,TENKH,NOIDUNG
 005678,Trần Thị B,"TT tiền nước Ma KH-001234,005678 kỳ 8/2026"
 ```
 
-Mã xác nhận hoàn toàn khác các IDKH ghi rõ vẫn được báo lỗi riêng dòng để kiểm tra; các dòng khác tiếp tục xử lý. Một HD được phép liên kết nhiều IDKH; không từ chối chỉ vì HD đã xuất hiện ở khách hàng khác. Tệp đã nhập có lỗi có thể được tải lại để học các dòng đã sửa; các receipt giữ những dòng đã học khỏi bị học trùng.
+Mã xác nhận khác nội dung vẫn được học, có thông tin chẩn đoán để giải thích khi đối soát. Một HD được phép liên kết nhiều IDKH; không từ chối chỉ vì HD đã xuất hiện ở khách hàng khác. Tệp đã nhập có lỗi có thể được tải lại để học các dòng đã sửa; các receipt giữ những dòng đã học khỏi bị học trùng.
 
 ## Nhận diện tổng quát và thông báo lỗi bố cục
 
@@ -85,7 +85,7 @@ Sheet chưa xử lý hoặc trống vẫn có tiêu đề và không có giao d�
 
 Tên sheet Excel giữ nguyên nếu hợp lệ; tên vượt giới hạn, chứa ký tự không hợp lệ hoặc trùng sẽ được sửa an toàn. Tên sheet gốc vẫn có trong cột dữ liệu. Tên CSV cũng xử lý ký tự không hợp lệ Windows và trùng tên, không thay nội dung/số bên trong.
 
-Mã khách hàng, tham chiếu và nội dung được ghi dưới dạng chuỗi trong Excel; không chuyển mã sang số hay công thức. CSV thêm dấu bảo vệ cho chuỗi bắt đầu như công thức. CSV/Excel kết quả có cột mẫu chung, số khách hàng dùng mẫu và loại/đơn vị thu hộ. Loại chưa xác nhận giữ unknown. Không xuất riêng dữ liệu đã học; chức năng nhập CSV đã xác nhận vẫn hoạt động, bao gồm tệp CSV cũ có trường nội dung gốc. Xem [mẫu chung và thu hộ/tự trả](shared-payment-templates.md).
+Mã khách hàng, tham chiếu và nội dung được ghi dưới dạng chuỗi trong Excel; không chuyển mã sang số hay công thức. CSV thêm dấu bảo vệ cho chuỗi bắt đầu như công thức. CSV/Excel kết quả có cột mẫu chung, số khách hàng dùng mẫu và loại/đơn vị thu hộ. Loại chưa có nguồn nhãn hoặc bố cục đủ rõ giữ unknown. Các cột gợi ý khách hàng/nguồn gợi ý được giữ cho dòng cần duyệt. Không xuất riêng dữ liệu đã học; chức năng nhập CSV đã xác nhận vẫn hoạt động, bao gồm tệp CSV cũ có trường nội dung gốc. Xem [mẫu chung và thu hộ/tự trả](shared-payment-templates.md).
 
 Xuất dùng tệp tạm và ghi theo dòng để giới hạn RAM. File được đóng trước khi tải/dọn trên Windows; file tạm được dọn sau khi tải xong. Excel có giới hạn độ dài ô/số dòng, nên nếu vượt giới hạn hệ thống báo tải CSV theo sheet để giữ đầy đủ dữ liệu, không tự cắt nội dung.
 

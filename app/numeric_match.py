@@ -11,13 +11,14 @@ def compare_ordered_numbers(query, stored_segments, stored_template):
     lexical = SequenceMatcher(None, query.template, stored_template, autojunk=False).ratio()
     # A bank reference's own letter/digit pattern changes between transfers;
     # only stable identifier formats participate in identity alignment.
-    shape = lambda n: (n['numeric_type'], '*' if n['numeric_type'] in VARIABLE_TYPES else n.get('format', '#'))
+    variable = lambda n: n['numeric_type'] in VARIABLE_TYPES or n.get('learned_non_id', False)
+    shape = lambda n: ('VARIABLE', '*') if variable(n) else (n['numeric_type'], n.get('format', '#'))
     structure = SequenceMatcher(None, [shape(n) for n in query.numbers],
                                 [shape(n) for n in historical], autojunk=False).ratio()
     template_compatible = lexical >= .70 and structure >= .75
     historical_by_slot = {n['slot']: n for n in historical}
-    query_stable = [n for n in query.numbers if n['numeric_type'] not in VARIABLE_TYPES]
-    history_stable = [n for n in historical if n['numeric_type'] not in VARIABLE_TYPES]
+    query_stable = [n for n in query.numbers if not variable(n)]
+    history_stable = [n for n in historical if not variable(n)]
     # Optional changing references may be inserted/omitted by the bank. Align
     # identity fields only if their COMPLETE role/format sequence still agrees.
     # This preserves identity order and never uses an unordered set of numbers.
@@ -35,7 +36,7 @@ def compare_ordered_numbers(query, stored_segments, stored_template):
                      'absolute_slot_match': bool(old and old['slot'] == number['slot']),
                      'same_role': same_role, 'exact': exact,
                      'same_format': bool(old and number.get('format', '#') == old.get('format', '#')),
-                     'variable_reference': number['numeric_type'] in VARIABLE_TYPES})
+                     'variable_reference': variable(number)})
     # Contracts are stable identity evidence, unlike changing invoice/bank references.
     q_contracts = [n['value'] for n in query.numbers if n['numeric_type'] == 'CONTRACT_ID']
     h_contracts = [n['value'] for n in historical if n['numeric_type'] == 'CONTRACT_ID']
@@ -58,7 +59,7 @@ def compare_ordered_numbers(query, stored_segments, stored_template):
         stable_sequence_matches and code_sequence(query_codes) == code_sequence(history_codes))
     code_conflicts = [r for r in rows if r['type'] in CODE_TYPES and
                       not (r['same_role'] and r['exact'] and r['same_format'] and stable_sequence_matches)]
-    stable = [r for r in rows if r['type'] not in VARIABLE_TYPES]
+    stable = [r for r in rows if not r['variable_reference']]
     agreement = sum(r['exact'] and r['same_role'] for r in stable) / len(stable) if stable else 0
     return {'template_compatible': template_compatible, 'lexical_template_similarity': round(lexical, 4),
             'numeric_structure_similarity': round(structure, 4), 'ordered_comparison': rows,

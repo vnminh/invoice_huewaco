@@ -1,5 +1,6 @@
 """Confirmed imports persist independently of benchmark evaluation."""
 from collections import Counter
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 from pathlib import Path
@@ -9,36 +10,39 @@ from sqlalchemy.exc import DataError, IntegrityError
 
 from .db import Customer, KnowledgeReceipt, Metadata, Pattern, sessions
 from .excel import ConfirmedCsv, StreamingWorkbook, LAYOUT_VERSION, layout_guidance
-from .core import id_key, learning_receipt
+from .core import id_key
 from . import id_slots
 from .id_slots import BATCH_MIN_CUSTOMERS
 from .normalize import fold
+from .identifiers import channel_key, confirmed_customer_ids
+from .interactive import resolve_channel
 from .payment_templates import collection_channel, unique_transfer_reference
 from .row_errors import ROW_DATA_ERRORS, RowErrors, prepare_rows
 
 
-def learning_units(batches, core, size=32):
+def learning_units(batches, core, size=32, channel_resolver=channel_key):
     """Yield (rows, split): split > 0 marks a provider batch-settlement run of ``split`` customers.
 
     Confirmed files list a wallet/collection settlement as consecutive rows sharing one
     narrative, one row per customer, with the collection channel in the bank/channel column.
-    Such runs are learned compactly (registry, receipt and layout statistics only); every
+    Such runs are learned compactly (registry, membership, receipt and layout statistics); every
     other row keeps full per-customer pattern learning.
     """
     pending, run, run_key = [], [], None
 
     def close(run):
-        customers = {id_key(row.customer_id) for row in run}
+        customers = {cid for row in run for cid in confirmed_customer_ids(row.customer_id)}
         # Only collection services (MoMo, Payoo, VNPAY...) are stored compactly. An organisation
         # paying many meters at once keeps full per-customer learning for later allocation.
-        if (len(customers) >= BATCH_MIN_CUSTOMERS and collection_channel(run[0].payer)
+        if (len(customers) >= BATCH_MIN_CUSTOMERS and collection_channel(channel_resolver(run[0].payer))
                 and unique_transfer_reference(core.normalize(run[0].raw))):
             return [(run[start:start + size], len(customers)) for start in range(0, len(run), size)], []
         return [], run
 
     for batch in batches:
         for row in batch:
-            key = ' '.join(fold(row.raw).split()) if row.label_status == 'confirmed' and row.customer_id else None
+            key = (' '.join(fold(row.raw).split()), channel_resolver(row.payer), row.date, row.reference) \
+                if row.label_status == 'confirmed' and row.customer_id else None
             if key is not None and key == run_key:
                 run.append(row)
                 continue
@@ -68,7 +72,7 @@ class ImportCancelled(Exception):
 
 
 def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=None, check_cancel=None,
-                     row_errors=None, only_sheets=None):
+                     row_errors=None, only_sheets=None, write_lock=None):
     factory = sessions(engine)
     counts = Counter()
     payers = Counter()
@@ -82,28 +86,41 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             check_cancel()
             digest.update(chunk)
     check_cancel()
+    @contextmanager
+    def write_session():
+        # Serialize only writes/commits, not reading, feature extraction or matching.
+        # The local lock also protects SQLite fixtures; PostgreSQL coordinates with
+        # feedback/admin/maintenance through the shared transaction advisory lock.
+        with write_lock if write_lock is not None else nullcontext():
+            with factory.begin() as session:
+                if engine.dialect.name == 'postgresql':
+                    session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+                yield session
+
     key = 'import:' + digest.hexdigest()
     alias_extractor = core.learning_alias_signature()
     summary = {'file': Path(path).name, 'sha256': digest.hexdigest(), 'status': 'running',
                'alias_extractor': alias_extractor, 'layout_reader': LAYOUT_VERSION}
-    with factory.begin() as session:
+    with write_session() as session:
+        resolve_channel(session, '')
+        bank_aliases = session.info['bank_alias_map'].copy()
         record = session.get(Metadata, key)
         if record:
             # Preserve a completed import when repeating it; receipts prevent duplication.
             previous = json.loads(record.value)
             if previous.get('status') == 'completed':
-                if previous.get('feature_extractor') != core.extractor.name or previous.get('embedding_model') != core.embedder.name:
+                if previous.get('embedding_model') != core.embedder.name:
                     raise ValueError('Imported file uses a different model; reimport confirmed history into a fresh database')
-                if (previous.get('alias_extractor') == alias_extractor
-                        and previous.get('layout_reader') == LAYOUT_VERSION
-                        and not previous.get('counts', {}).get('errors', previous.get('row_error_count', 0))
-                        and not previous.get('counts', {}).get('name_extraction_unavailable', 0)):
-                    return {**previous, 'already_imported': True}
-                # Retry errored files; receipts prevent relearning successful rows.
+                core.check_model(session)
+                # An approved upload is processed again: enrich aliases/positions and
+                # restore explicitly supplied links if they were removed. Receipts
+                # prevent duplicate observation counts, even across XLSX and CSV.
             record.value = json.dumps(summary)
         else:
             session.add(Metadata(key=key, value=json.dumps(summary)))
     sheets, skipped_sheets, sheet_counts = [], [], Counter()
+    def bank_channel(value):
+        return bank_aliases.get(' '.join(fold(value or '').split()), channel_key(value))
     try:
         check_cancel()
         is_csv = Path(path).suffix.lower() == '.csv'
@@ -117,7 +134,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
             if not sheets:
                 raise ValueError(layout_guidance('confirmed'))
             for sheet in sheets:
-                for batch, split in learning_units(workbook.batches(sheet=sheet, batch_size=min(batch_size, 32)), core):
+                for batch, split in learning_units(workbook.batches(sheet=sheet, batch_size=min(batch_size, 32)), core, channel_resolver=bank_channel):
                     check_cancel()
                     failed = set() if split else prepare_rows(core, [row for row in batch if row.label_status == 'confirmed'],
                                                               row_errors, check_cancel, embedding_chunk)
@@ -125,9 +142,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                         core.prepare_names([row.raw for row in batch if row.label_status == 'confirmed' and id(row) not in failed],
                                            check_cancel)
                     batch_counts, batch_payers, batch_periods = Counter(), Counter(), set()
-                    with factory.begin() as session:
-                        if engine.dialect.name == 'postgresql':
-                            session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+                    with write_session() as session:
                         # Configuration failures affect every row; do not misreport them as bad input.
                         core.check_model(session, writing=True)
                         for row in batch:
@@ -144,8 +159,8 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                                 with session.begin_nested():
                                     if not row.customer_id:
                                         raise ValueError('Dòng học thiếu mã khách hàng đã xác nhận.')
-                                    customer_id = core.ensure_customer(session, row.customer_id, row.customer_name).id if is_csv else row.customer_id
-                                    receipt = learning_receipt(row.raw, customer_id, row.date, row.amount, row.payer) if is_csv else None
+                                    customer_id = row.customer_id
+                                    receipt = None  # The core uses the same idempotent content receipt for XLSX/CSV/review.
                                     if split:
                                         learned = core.learn_settlement(session, row, customer_id, row.customer_name, split,
                                                                         receipt_key=receipt)
@@ -154,7 +169,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                                         learned = core.learn(session, row, customer_id, row.customer_name, receipt_key=receipt)
                                     # Trusted label, but report when the payer wrote other IDs (audit only).
                                     written = {id_key(value) for value in core.normalize(row.raw).customer_ids}
-                                    if written and id_key(customer_id) not in written:
+                                    if written and not {id_key(cid) for cid in confirmed_customer_ids(customer_id)}.intersection(written):
                                         batch_counts['label_not_in_text_ids'] += 1
                                     if not split and core.extract_names(row.raw)['name_extraction']['status'] == 'unavailable':
                                         batch_counts['name_extraction_unavailable'] += 1
@@ -178,9 +193,7 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
         check_cancel()
         if progress:
             progress({**dict(counts), 'phase': 'learning_id_slots'})
-        with factory.begin() as session:
-            if engine.dialect.name == 'postgresql':
-                session.execute(text('SELECT pg_advisory_xact_lock(731026)'))
+        with write_session() as session:
             # Customer-ID positions are recounted from all confirmed links after each import.
             summary['id_slots'] = id_slots.rebuild(session, check_cancel=check_cancel)
     except ImportCancelled:
@@ -188,14 +201,18 @@ def import_confirmed(engine, core, path, batch_size=1000, progress=None, before=
                        periods=sorted(periods), payers=dict(payers),
                        feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
                        counts={**dict(counts), 'errors': row_errors.count}, **row_errors.summary())
-        with factory.begin() as session:
-            session.get(Metadata, key).value = json.dumps({k: v for k, v in summary.items() if k != 'row_errors'}, ensure_ascii=False)
+        with write_session() as session:
+            record = session.get(Metadata, key)
+            # Another job may have finished importing the identical file while
+            # this job was stopped. Keep that successful knowledge receipt.
+            if json.loads(record.value).get('status') != 'completed':
+                record.value = json.dumps({k: v for k, v in summary.items() if k != 'row_errors'}, ensure_ascii=False)
         raise ImportCancelled(summary) from None
     summary.update(status='completed', sheets=sheets, sheet_counts=dict(sheet_counts), skipped_sheets=skipped_sheets,
                    periods=sorted(periods), payers=dict(payers),
                    feature_extractor=core.extractor.name, embedding_model=core.embedder.name,
                    counts={**dict(counts), 'errors': row_errors.count}, **row_errors.summary())
-    with factory.begin() as session:
+    with write_session() as session:
         # Row indices/reasons are operational reports, stored in working files, not knowledge.
         session.get(Metadata, key).value = json.dumps({k: v for k, v in summary.items() if k != 'row_errors'}, ensure_ascii=False)
     return summary

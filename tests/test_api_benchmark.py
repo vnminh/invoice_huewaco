@@ -113,11 +113,11 @@ def test_cross_month_learns_all_channels_skips_ko_and_reports_unknown_zero(tmp_p
         (6,{'A':46204,'C':'887766','D':'Wallet customer','E':10,'G':'Thanh toan ma KH 887766','H':'VNPAY'}),
         (7,{'A':46204,'C':'ko','D':'Skip','E':10,'G':'Unused transfer','H':'BIDV'})])
     raw=workbook(tmp_path/'august.xlsx',[(12,{'B':'Số tham chiếu','I':'Mô tả'}),
-        (14,{'B':'r1','C':'01/08/2026','E':10,'D':0,'I':'TT KH 1545 tien nuoc'}),
+        (14,{'B':'r1','C':'01/08/2026','E':10,'D':0,'I':'TT KH 001545 tien nuoc'}),
         (15,{'B':'r2','C':'01/08/2026','E':10,'D':0,'I':'TT KH 999999 tien nuoc'}),
         (16,{'B':'r3','C':'01/08/2026','E':10,'D':0,'I':'Skipped transfer'})])
     truth=workbook(tmp_path/'august_fn.xlsx',[(4,{'C':'IDKH','G':'EBL'}),
-        (5,{'A':46235,'C':'1545','D':'Em','E':10,'G':'TT KH 1545 tien nuoc','H':'BIDV'}),
+        (5,{'A':46235,'C':'1545','D':'Em','E':10,'G':'TT KH 001545 tien nuoc','H':'BIDV'}),
         (6,{'A':46235,'C':'999999','D':'New','E':10,'G':'TT KH 999999 tien nuoc','H':'BIDV'}),
         (7,{'A':46235,'C':'ko','D':'Skip','E':10,'G':'Skipped transfer','H':'BIDV'})])
     report=run_benchmark(raw,truth,tmp_path/'out',training_path=train,batch_size=1)

@@ -18,6 +18,14 @@ CHANNEL_LABELS = {
     'customer_name': 'tên khách hàng',
 }
 
+SOURCE_FAMILIES = {
+    'customer_id': 'identifier', 'identity': 'identifier', 'structured': 'identifier',
+    'exact_text': 'approved_history', 'payer': 'payer_account',
+    'name_entity': 'customer_name', 'customer_name': 'customer_name',
+    'shared_template': 'layout', 'postings': 'text_similarity', 'semantic': 'text_similarity',
+    'full_text': 'text_similarity', 'trigram': 'text_similarity',
+}
+
 
 def fuse_rankings(channels, customers, limit, scoped=False):
     """Weighted reciprocal rank fusion, with at most three variants per first pass.
@@ -37,7 +45,8 @@ def fuse_rankings(channels, customers, limit, scoped=False):
     # Preserve one direct identity/exact-text hit per customer per channel even
     # when several weak, generic channels otherwise crowd it out of the budget.
     reserved = []
-    for channel in ('identity', 'exact_text'):
+    per_channel = max(1, limit // 5)
+    for channel in ('customer_id', 'identity', 'exact_text', 'name_entity', 'structured'):
         seen_customers = set()
         for pattern_id in channels.get(channel, []):
             customer = customers.get(pattern_id)
@@ -45,6 +54,8 @@ def fuse_rankings(channels, customers, limit, scoped=False):
                 if pattern_id not in reserved:
                     reserved.append(pattern_id)
                 seen_customers.add(customer)
+                if len(seen_customers) >= per_channel:
+                    break
     reserved = reserved[:limit]
     if scoped:
         selected = reserved + [pattern_id for pattern_id in ordered if pattern_id not in reserved][:limit - len(reserved)]
@@ -67,4 +78,8 @@ def fuse_rankings(channels, customers, limit, scoped=False):
              'selected_customer_count': len({customers[pattern_id] for pattern_id in selected}),
              'channel_counts': {channel: len(set(ids)) for channel, ids in channels.items()},
              'candidate_sources': {pattern_id: sources[pattern_id] for pattern_id in selected}}
+    # These are retrieval routes, not independent confirmations/probabilities.
+    trace['candidate_source_families'] = {pattern_id: sorted({SOURCE_FAMILIES[source] for source in sources[pattern_id]})
+                                          for pattern_id in selected}
+    trace['confidence_policy'] = 'correlated retrieval routes are not independent identity evidence'
     return selected, trace

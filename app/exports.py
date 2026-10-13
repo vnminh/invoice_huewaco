@@ -13,7 +13,8 @@ RESULT_COLUMNS = ('row_index', 'date', 'raw', 'amount', 'predicted_customer_id',
     'sheet', 'payer', 'reference', 'debit', 'validation_errors', 'input_file', 'payment_period',
     'extracted_name', 'extracted_names', 'name_extraction_status', 'shared_template_id',
     'shared_template_customer_count', 'payment_mode', 'provider_kind', 'provider_name',
-    'case_type', 'suggested_customer_ids')
+    'case_type', 'suggested_customer_ids', 'recommended_customers', 'recommendation_sources',
+    'candidate_group_size', 'candidate_group_scope', 'candidate_group_sources', 'candidate_group_preview')
 RESULT_LABELS = ('Dòng gốc', 'Thời gian chuyển khoản', 'Nội dung chuyển tiền', 'Số tiền ghi có',
     'Mã khách hàng đề xuất', 'Tên khách hàng đề xuất', 'Điểm so khớp', 'Đề xuất', 'Trạng thái duyệt',
     'Mã khách hàng xác nhận', 'Tên khách hàng xác nhận', 'Đã học', 'Lý do', 'Mã mẫu lịch sử',
@@ -21,7 +22,8 @@ RESULT_LABELS = ('Dòng gốc', 'Thời gian chuyển khoản', 'Nội dung chuy
     'Ngân hàng / kênh', 'Tham chiếu', 'Số tiền ghi nợ', 'Thông tin cần kiểm tra', 'Tệp đầu vào',
     'Kỳ thanh toán', 'Tên trích từ nội dung', 'Các tên trích từ nội dung', 'Trạng thái trích tên',
     'Mã mẫu giao dịch', 'Số khách hàng dùng mẫu', 'Kiểu thanh toán', 'Loại đơn vị thu hộ', 'Đơn vị thu hộ',
-    'Trường hợp', 'Mã đề xuất cần kiểm tra')
+    'Trường hợp', 'Mã đề xuất cần kiểm tra', 'Khách hàng gợi ý', 'Cơ sở gợi ý',
+    'Số khách hàng trong nhóm gợi ý', 'Phạm vi nhóm gợi ý', 'Cơ sở giới hạn nhóm', 'Một số khách hàng trong nhóm')
 CASES = {'batch': 'Thu hộ tổng hợp', 'multi': 'Nhiều khách hàng', 'history_multi': 'Lịch sử chia nhiều khách hàng',
          'suggested': 'Mã đề xuất'}
 DECISIONS = {'auto_accept': 'Có thể xác nhận', 'review': 'Cần duyệt',
@@ -52,19 +54,29 @@ def case_of(row):
 
 def export_values(row):
     evidence = row.get('evidence', {})
-    source = evidence.get('pattern_source', {})
+    history = evidence if evidence.get('matched_pattern') else evidence.get('nearest_history', {})
+    source = history.get('pattern_source', {})
+    group = row.get('candidate_group', {})
+    group_labels = {'bank_template': 'Cùng ngân hàng và mẫu nội dung', 'bank_template_entity': 'Cùng ngân hàng, mẫu và tên',
+        'bank_entity': 'Cùng ngân hàng và tên', 'entity': 'Tên / bí danh', 'individual': 'Gợi ý cá nhân liên quan',
+        'bank': 'Lịch sử cùng ngân hàng', 'none': ''}
     return [row.get('row_index'), row.get('date'), row['raw'], row.get('amount', 0),
-        row.get('customer_id'), row.get('customer_name'), row['score'], row['decision'], row['status'],
+        row.get('customer_id') or row.get('suggested_customer_id'), row.get('customer_name') or row.get('suggested_customer_name'), row['score'], row['decision'], row['status'],
         row.get('confirmed_customer_id'), row.get('confirmed_customer_name'), row['learned'],
-        evidence.get('reason_vi') or evidence.get('reason'), evidence.get('matched_pattern_id'),
-        evidence.get('matched_pattern'), evidence.get('matched_template'), source.get('file'), source.get('row'),
+        evidence.get('reason_vi') or evidence.get('reason'), history.get('matched_pattern_id'),
+        history.get('matched_pattern'), history.get('matched_template'), source.get('file'), source.get('row'),
         row.get('sheet'), row.get('payer'), row.get('reference'), row.get('debit', 0),
         ' '.join(row.get('validation_errors', [])), row.get('source'), row.get('payment_period'),
         row.get('extracted_name'), '; '.join(row.get('extracted_names', [])),
-        row.get('name_extraction', {}).get('status'), evidence.get('shared_template_id'),
-        evidence.get('shared_template_customer_count'), row.get('payment_mode', 'unknown'),
+        row.get('name_extraction', {}).get('status'), history.get('shared_template_id'),
+        history.get('shared_template_customer_count'), row.get('payment_mode', 'unknown'),
         row.get('provider_kind', 'unknown'), row.get('provider_name', ''),
-        CASES.get(case_of(row)[0], ''), ', '.join(case_of(row)[1])]
+        CASES.get(case_of(row)[0], ''), ', '.join(case_of(row)[1]),
+        '; '.join(item['customer_id'] + ' - ' + item.get('customer_name', '') for item in row.get('recommendations', [])),
+        '; '.join(item['customer_id'] + ': ' + ', '.join(item.get('sources', [])) for item in row.get('recommendations', [])),
+        group.get('total', ''), group_labels.get(group.get('kind'), '') +
+            (' + gợi ý cá nhân liên quan' if group.get('includes_individual_suggestions') else ''), '; '.join(group.get('sources', [])),
+        '; '.join(item['customer_id'] + ' - ' + item.get('customer_name', '') for item in group.get('members', []))]
 
 
 def sheet_names(job):

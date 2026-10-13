@@ -1,0 +1,44 @@
+{
+  "protocol": "approved-observation replay before/after incremental learning; NOT unseen-data F1",
+  "train": "Ngan hang thang 7-2026 FN.xlsx",
+  "sheet": "BIDV",
+  "initial_rows": 200,
+  "growth_rows": 1000,
+  "skipped_before_sample_complete": {
+    "unconfirmed_or_invalid": 12
+  },
+  "embedding": "hash (not a semantic-model benchmark)",
+  "ner_enabled": false,
+  "candidate_limit": 1,
+  "backend": "isolated SQLite",
+  "before": {
+    "retained_confirmed_owner": 200,
+    "shared_signature_rows": 25,
+    "auto_accept": 175,
+    "auto_correct": 175,
+    "auto_wrong": 0,
+    "memory_auto": 175,
+    "ambiguous_auto": 0,
+    "manual_check": 25
+  },
+  "after": {
+    "retained_confirmed_owner": 200,
+    "shared_signature_rows": 25,
+    "auto_accept": 175,
+    "auto_correct": 175,
+    "auto_wrong": 0,
+    "memory_auto": 175,
+    "ambiguous_auto": 0,
+    "manual_check": 25
+  },
+  "lost_pattern_links": 0,
+  "lost_recurring_links": 0,
+  "unique_owner_auto_regressions": 0,
+  "seconds": {
+    "initial_learning": 4.272,
+    "growth_learning": 30.602,
+    "before_replay": 2.812,
+    "after_replay": 2.627
+  },
+  "passed": true
+}

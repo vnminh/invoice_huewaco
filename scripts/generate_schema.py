@@ -2,10 +2,15 @@
 from pathlib import Path
 import argparse
 import sys
+import types
 
 from sqlalchemy import create_mock_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Schema generation must not load .env, start the application, or initialize models.
+package = types.ModuleType('app')
+package.__path__ = [str(Path(__file__).resolve().parents[1] / 'app')]
+sys.modules['app'] = package
 from app.db import Base
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -29,6 +34,7 @@ header = f'''-- Standalone current schema: run this file alone for a new databas
 -- Requires PostgreSQL 15+ and pgvector installed on the PostgreSQL server.
 -- This script does not create users/databases, drop data, or start any services.
 -- Existing older schemas are not upgraded by CREATE TABLE IF NOT EXISTS.
+-- Current feature extractor: rules-v7-confirmed-evidence (16 knowledge tables).
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -47,6 +53,9 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO invoice_app;
         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO invoice_app;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO invoice_app;
+        -- Audit entries are immutable except for their explicit undo link.
+        REVOKE UPDATE, DELETE ON knowledge_changes FROM invoice_app;
+        GRANT UPDATE(reverted_by) ON knowledge_changes TO invoice_app;
     END IF;
 END;
 $permissions$;
@@ -57,5 +66,5 @@ path.parent.mkdir(parents=True, exist_ok=True)
 sql = '\n\n'.join(STATEMENTS).replace('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS ')
 sql = sql.replace('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS ')
 sql = sql.replace('CREATE UNIQUE INDEX ', 'CREATE UNIQUE INDEX IF NOT EXISTS ')
-path.write_text(header + '\n' + sql + '\n' + indexes, encoding='utf-8')
+path.write_text('\n'.join(line.rstrip() for line in (header + '\n' + sql + '\n' + indexes).splitlines()) + '\n', encoding='utf-8')
 print(path)

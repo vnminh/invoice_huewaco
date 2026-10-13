@@ -23,7 +23,7 @@ def test_bidv_layout_and_embedded_mkh_preserve_actual_customer_id():
     assert normalize_text('IBFT le van lanhMKH247220').customer_ids == []  # glued name is not an explicit label
     assert normalize_text('TT tien nuoc MKH247220').customer_ids == ['247220']
     assert normalize_text('TK: 5510000370 TT tien nuoc MKH: 001545').payer_accounts == []
-    assert normalize_text('TT nuoc ma khach hang 170342 va 008441').customer_ids == ['008441', '170342']
+    assert normalize_text('TT nuoc ma khach hang 170342 va 008441').customer_ids == ['170342', '008441']
 
 
 def test_unique_payer_history_recovers_customer_without_name_but_shared_account_abstains(db):
@@ -40,8 +40,10 @@ def test_unique_payer_history_recovers_customer_without_name_but_shared_account_
     add(core, factory, july, cid='002222', name='Other meter', row=2)
     with factory() as session:
         result = core.classify(session, august)
-        assert result['score'] == 0
-        assert result['customer_id'] is None
+        assert result['decision'] == 'manual_check'
+        assert result['score'] < core.review_threshold
+        assert result['evidence']['confirmed_recurrence']['owner_count'] == 2
+        assert {r['customer_id'] for r in result['recommendations']} == {'001545', '002222'}
 
 
 def test_same_agency_name_and_different_meter_never_auto_accepts(db):
@@ -51,7 +53,8 @@ def test_same_agency_name_and_different_meter_never_auto_accepts(db):
     with factory() as session:
         result = core.classify(session, 'TKThe :123456789, tai BANK. Truong tieu hoc A thanh toan tien nuoc CS2 thang 7/2026')
         assert result['decision'] == 'manual_check'
-        assert result['score'] == 0
+        assert 0 < result['score'] < core.review_threshold
+        assert result['customer_id'] == '001545'
 
 
 def test_receiver_name_is_not_a_water_payment_purpose(db):
@@ -61,7 +64,7 @@ def test_receiver_name_is_not_a_water_payment_purpose(db):
     with factory() as session:
         result = core.classify(session, '@@456@@_CHIHO_Truong tieu hoc A_ CTCP CAP NUOC HUE 5510000370')
         assert result['decision'] == 'manual_check'
-        assert result['score'] == 0
+        assert result['score'] < core.review_threshold
 
 
 def test_benchmark_reopens_saved_july_and_does_not_learn_august(tmp_path):
@@ -72,7 +75,7 @@ def test_benchmark_reopens_saved_july_and_does_not_learn_august(tmp_path):
         (5, {'A':46204,'C':'001545','D':'Em','E':10,'G':'TT KH 001545 tien nuoc','H':'BIDV'})])
     imported = import_confirmed(engine, core, train)
     assert imported['counts']['learned'] == 1
-    assert import_confirmed(engine, core, train)['already_imported']
+    assert import_confirmed(engine, core, train)['counts']['learned'] == 0
     engine.dispose()
     engine = make_engine('sqlite:///' + str(tmp_path/'saved.sqlite'))
     factory = sessions(engine)

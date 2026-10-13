@@ -1,89 +1,87 @@
-# Cấu trúc kho kiến thức PostgreSQL
+# Schema PostgreSQL của kho kiến thức
 
-Nguồn chuẩn: `app/db.py`; DDL database mới: `sql/create_current.sql` (chỉ chạy một file, không cần migration). PostgreSQL 15+ cần pgvector cài trên máy chủ, extension `vector` và `pg_trgm`. Quản trị viên tự chạy SQL; backend không tự migrate.
+Schema hiện tại có **16 bảng**, tạo mới bằng một file [create_current.sql](../sql/create_current.sql). Backend không tự tạo/migrate. Kho cũ dùng [hướng dẫn nâng cấp đến 007](migration-and-storage.md).
 
-## Phạm vi lưu trữ
-
-PostgreSQL chỉ lưu hồ sơ và bằng chứng đã học: khách hàng, bí danh, mẫu nội dung, số, người trả tiền, khóa truy xuất, loại trừ và dấu chống học trùng. Không lưu mọi giao dịch đã lọc, toàn bộ phản hồi hay lịch sử tác vụ.
-
-Mẫu đã học vẫn có `raw_example`, nguồn và ngày ví dụ để giải thích kết quả ghép. Đây là ví dụ đại diện của kiến thức, không phải bảng lịch sử tất cả giao dịch. Hash chống trùng và thông tin import là metadata của quá trình học.
+## Quan hệ
 
 ```mermaid
 erDiagram
-    customers ||--o{ customer_aliases : aliases
-    payment_templates ||--o{ transaction_patterns : customer_links
-    customers ||--o{ payer_entities : payers
-    customers ||--o{ transaction_patterns : patterns
-    payer_entities o|--o{ transaction_patterns : channel
-    transaction_patterns ||--o{ numeric_slots : slots
+    customers ||--o{ transaction_patterns : has
+    payment_templates ||--o{ transaction_patterns : links
+    customers ||--o{ collection_memberships : belongs
+    payment_templates ||--o{ collection_memberships : roster
+    transaction_patterns ||--o{ numeric_slots : positions
     transaction_patterns ||--o{ numeric_features : values
-    transaction_patterns ||--o{ retrieval_postings : retrieval
-    customers ||--o{ hard_negatives : exclusions
-    transaction_patterns o|--o{ hard_negatives : optional_evidence
-    customers ||--o{ knowledge_receipts : deduplication
+    transaction_patterns ||--o{ retrieval_postings : search
+    transaction_patterns ||--o{ recurring_links : observations
+    customers ||--o{ recurring_links : confirmed_owner
+    customers ||--o{ customer_aliases : aliases
+    customers ||--o{ payer_entities : payers
+    payer_entities ||--o{ transaction_patterns : channel
+    customers ||--o{ knowledge_receipts : confirmed
+    customers ||--o{ hard_negatives : rejected
+    transaction_patterns o|--o{ hard_negatives : example
 ```
 
-`knowledge_metadata` là bảng key/value độc lập, không có FK.
+Một mẫu có nhiều khách hàng; một khách hàng có nhiều mẫu. Cùng khách hàng/mẫu có thể có nhiều liên kết riêng khi định danh ổn định khác nhau. Giá trị số thuộc **liên kết**, không thuộc chung mọi khách hàng của mẫu. `collection_memberships` dành cho danh sách thu hộ tổng hợp không có nội dung riêng của từng khách hàng.
 
-## Danh mục 12 bảng
+## Danh mục bảng
 
-| Bảng | Trường chính | Ràng buộc / ý nghĩa |
-| --- | --- | --- |
-| `customers` | `id VARCHAR(100)`, `canonical_name TEXT`, `normalized_name TEXT` | PK là mã dạng chuỗi; tên chuẩn hiển thị, tên bỏ dấu dùng tìm kiếm. |
-| `customer_aliases` | `id`, `customer_id`, `alias`, `normalized_alias`, `confidence` | Unique `(customer_id, normalized_alias)`; tên con người xác nhận có confidence 1.0, tên trích tự động dưới 1.0 và chỉ hỗ trợ retrieval cho đến khi xác nhận. |
-| `payer_entities` | `id`, `customer_id`, `payer_name`, `payer_type`, `confidence`, `seen_count`, `last_seen`, `last_period` | Unique `(customer_id, payer_name)`; cùng thẻ/tài khoản có thể thuộc nhiều khách hàng, khi đó không được xem là định danh duy nhất. |
-| `payment_templates` | `id`, `fingerprint`, `template_text`, `structure`, `display_name`, `description`, `payment_mode`, `provider_kind`, `provider_name`, `created_at`, `max_transfer_customers`, `settlement_rows` | Bố cục dùng chung, unique fingerprint; một mẫu có nhiều khách hàng, không chứa bộ giá trị số riêng. Loại mặc định do admin xác nhận (hoặc lấy từ kênh thu hộ trong tệp FN); liên kết mới thiếu nhãn riêng dùng loại này. `max_transfer_customers`: số khách hàng lớn nhất trong một lần chuyển; `settlement_rows`: dòng thu hộ tổng hợp học gọn. |
-| `customer_id_slots` | `id`, `context` (unique), `hits`, `total`, `example`, `updated_at` | Ngữ cảnh vị trí số học từ dữ liệu xác nhận; dựng lại sau mỗi lần nhập. |
-| `transaction_patterns` | `id`, `customer_id`, `template_id`, `payment_mode`, `provider_kind`, `provider_name`, `payer_id`, fingerprint, ví dụ, cấu trúc/số, vector, nguồn/thống kê | Liên kết khách hàng với mẫu chung; unique `(customer_id, fingerprint)` giữ các bộ định danh riêng. `payer_id` nullable liên kết kênh đại diện. |
-| `numeric_slots` | `id`, `pattern_id`, `slot_index`, `slot_confidence`, `seen_count`, `last_period` | Unique `(pattern_id, slot_index)`; thống kê độ ổn định vị trí số. |
-| `numeric_features` | `id`, `pattern_id`, `slot_index`, `numeric_value TEXT`, `value_digest VARCHAR(64)`, `numeric_type`, `exact_value_confidence`, `seen_count`, `missing_count`, `last_period`, `last_seen` | Unique `(pattern_id, slot_index, value_digest)`; nhiều giá trị theo slot; giữ nguyên văn, không giới hạn 100 ký tự. |
-| `retrieval_postings` | `id`, `token TEXT`, `token_digest VARCHAR(64)`, `pattern_id`, `weight` | Unique `(token_digest, pattern_id)`; inverted index nối khóa truy xuất với mẫu. |
-| `hard_negatives` | `id`, `transaction_fingerprint`, `customer_id`, `pattern_id` nullable, `count` | Unique `(transaction_fingerprint, customer_id)`; bằng chứng từ chối ghép nội dung với khách hàng này. |
-| `knowledge_receipts` | `id`, `fingerprint`, `customer_id`, `period` | Unique `fingerprint`; dấu chống học trùng, khách hàng và kỳ. Có receipt cho học dương và cho hành động loại trừ. |
-| `knowledge_metadata` | `key VARCHAR(100)`, `value TEXT` | PK `key`; phiên bản encoder/extractor, file import SHA-256 và trạng thái/kỳ/thống kê học. |
+| Bảng | Dữ liệu/chìa khóa chính |
+| --- | --- |
+| `bank_aliases` | Bí danh ngân hàng/kênh trùng chính xác, kênh chuẩn, ghi chú và thời điểm đã dùng để học. Không regex hoặc ghi đè kênh cũ. |
+| `knowledge_changes` | Nhật ký chỉnh kiến thức: actor/action/entity, snapshot trước/sau, khả năng hoàn tác, liên kết undo, thời điểm. Không lưu kết quả lọc. |
+| `customers` | `id` (PK, mã 6 số theo ứng dụng), `canonical_name`, `normalized_name`. |
+| `customer_aliases` | Tên/bí danh, bản chuẩn hóa, confidence; UNIQUE(customer_id, normalized_alias). |
+| `payer_entities` | Tên ngân hàng/kênh hoặc tài khoản/thẻ từng trả, loại, confidence/count/thời gian; UNIQUE(customer_id, payer_name). |
+| `payment_templates` | Bố cục chữ đã che tên phù hợp, cấu trúc, `channel_key`, fingerprint, tên/ghi chú quản lý, loại/đơn vị thu hộ mặc định, thống kê quyết toán lớn. |
+| `transaction_patterns` | FK khách hàng/mẫu/người trả tiền; ví dụ gốc, nguồn, vector, số có thứ tự, fingerprint, kênh, phiên bản trích xuất, nhãn chẩn đoán, loại thanh toán riêng và thống kê gặp. UNIQUE(customer_id, fingerprint). |
+| `recurring_links` | Ví dụ nội dung ổn định đã xác nhận, FK pattern/khách hàng, kênh, chữ và số có thứ tự, digest, nguồn, lần gặp. UNIQUE(pattern_id, signature_hash); index(channel_key, signature_hash). Giữ mọi biến thể đã học, tra toàn bộ chủ sở hữu trước khi giới hạn gợi ý. |
+| `collection_memberships` | FK mẫu/khách hàng, số lần gặp và lần gần nhất; UNIQUE(template_id, customer_id). Không chứa vector/số của một người. |
+| `numeric_slots` | Vị trí trong một liên kết, confidence/count/last_period; UNIQUE(pattern_id, slot_index). |
+| `numeric_features` | Giá trị nguyên chuỗi TEXT, SHA-256, vai trò, confidence/count/missing_count theo slot; UNIQUE(pattern_id, slot_index, value_digest). |
+| `retrieval_postings` | Token tìm kiếm TEXT, SHA-256, pattern_id, trọng số; UNIQUE(token_digest, pattern_id). |
+| `customer_id_slots` | Ngữ cảnh số theo ngân hàng, hits/total/ví dụ; UNIQUE(channel_key, context). CHECK 0 <= hits <= total. |
+| `hard_negatives` | Cặp dấu nội dung/khách hàng đã bị từ chối (nội dung chuẩn hóa và chữ ký ổn định theo kênh), pattern_id có thể NULL, count; UNIQUE(transaction_fingerprint, customer_id). |
+| `knowledge_receipts` | Fingerprint chống học lặp, customer_id, tháng học từ ngày giao dịch. Không lưu kết quả đối soát. |
+| `knowledge_metadata` | Phiên bản encoder/extractor, trạng thái nhập, phiên bản thống kê ID slots và trạng thái bảo trì. |
 
-Các FK không tự `ON DELETE CASCADE`. API xóa liên kết theo thứ tự trong một transaction; không nên xóa riêng một hàng cha bằng SQL.
+## Các trường quan trọng
 
-Schema hiện có 12 bảng; kho phiên bản 003 bổ sung bằng `sql/migrations/004_learned_id_slots.sql`. Việc tách mẫu dùng chung cần database mới tạo từ `sql/create_current.sql`, hoặc migration `003_shared_templates.sql` đối với kho knowledge-only cũ. NER học alias và xuất theo sheet không cần thêm bảng riêng. Tên tự động gắn với IDKH đã xác nhận, không tự đổi tên chuẩn. Xem [mẫu chung, proxy/self và SQL](shared-payment-templates.md).
+`payment_templates.fingerprint` là SHA-256 của **kênh + shared shape + structure**. Cùng chữ ở hai ngân hàng không mặc nhiên chung quy tắc vị trí. `payment_mode` gồm `unknown`, `proxy`, `self`; `provider_kind` gồm `unknown`, `bank`, `wallet`, `other`. `provider_name` là tên đơn vị, không phải khách hàng.
 
-## Một mẫu được lưu thế nào?
+`transaction_patterns.fingerprint` gồm **kênh + template + structure + chuỗi định danh ổn định có thứ tự**. Tham chiếu có thể biến đổi trong cùng liên kết; số riêng khác có thể tạo liên kết khác. `normalizer_version` cho biết phiên bản đã tạo slots/vector. `label_metadata` lưu `mentioned_customer_ids`, `explicit_ids_agree`, `multiple_mentions`; đây là dữ liệu giải thích, không phải điều kiện chặn nhãn đã duyệt.
 
-Ví dụ đã xác nhận: `TT KH:001234 HD:700012 TIEN NUOC`.
+Ví dụ học `IDKH=001234`, nội dung `TT KH:005678 tiền nước kỳ 08/2026`: liên kết thuộc `001234`, chẩn đoán ghi mã được nhắc `005678` và không đồng ý nhãn. Không tạo posting `id:005678` trỏ tới `001234`. Khi đối soát đúng nội dung này, yêu cầu duyệt vì nhãn lịch sử và mã được nhắc khác nhau.
 
-- `customer_id = '001234'`, tên lấy từ hồ sơ khách hàng.
-- `raw_example`: toàn bộ câu gốc, không bỏ dấu hay cắt số.
-- `template_text`: chữ chuẩn hóa và placeholder số theo thứ tự.
-- `structure`: chuỗi vai trò/định dạng số.
-- `segments JSONB`: thứ tự đoạn, giá trị đầy đủ, vai trò, slot, định dạng và vị trí gốc.
-- `fingerprint`: SHA-256 của `[template, structure, ordered_identity]`. Định danh bao gồm hợp đồng/mã quan trọng với giá trị đầy đủ; cùng chữ nhưng hợp đồng khác có thể thành mẫu khác.
-- `embedding vector(384)`: vector semantic text; `embedding_model` ghi tên encoder.
-- `source_file`, `source_row`, `example_date`: nguồn ví dụ để hiển thị khi đối chiếu lịch sử.
-- `confidence`, `seen_count`, `last_seen`, `last_period`: bằng chứng tái xuất hiện, không phải xác suất đã hiệu chuẩn.
+`segments` JSONB lưu theo thứ tự:
 
-Hai slot có hai hàng `numeric_slots`, và giá trị tương ứng trong `numeric_features`. Mẫu có các posting như `template:<hash>`, `id:`, `n:`, `contract:`, `name:`, `payer:`, `code:`, `detail:`, từ nội dung và bucket vector tùy dữ liệu.
+```json
+{"type":"number","slot":1,"numeric_type":"CONTRACT_ID","value":"001234","raw_value":"001234","format":"#","context":"hd : _ tien #6","confirmed_customer_value":true}
+```
 
-Không có ràng buộc unique HD theo khách hàng: `contract:<value>` có thể trỏ tới nhiều liên kết thuộc nhiều IDKH. Mỗi liên kết giữ giá trị/slot riêng. Một HD có nhiều IDKH không yêu cầu thêm bảng hay đổi schema; ưu tiên IDKH được xử lý trong logic học/đối soát.
+Các trường offset/anchor/position được lưu thêm khi có. Một số HD sáu chữ số có thể được xác nhận là mã của khách hàng mà vẫn bảo toàn vai trò gốc; context theo ngân hàng và chủ sở hữu giúp phân biệt. Ngày/kỳ có thể tồn tại như segment bị loại khỏi đối sánh, không thành numeric slot hoặc bằng chứng định danh.
 
-Không lưu riêng mọi hóa đơn: số hóa đơn là feature biến đổi khi trích xuất được; mẫu lưu một ví dụ đại diện và các giá trị theo slot đã học.
+`last_period` là tháng giao dịch dùng để cập nhật độ lặp, **không phải kỳ hóa đơn nước**. `raw_example` là ví dụ đã duyệt để giải thích và phục hồi chỉ mục; không lưu mọi giao dịch đối soát.
 
-## Chỉ mục và chuỗi số dài
+## Chỉ mục và giới hạn
 
-Giá trị số/token là `TEXT`; SHA-256 cố định 64 ký tự dùng cho B-tree/unique. Tra cứu kiểm tra **digest và toàn bộ giá trị gốc**. Điều này giữ số dài, số 0 đầu và mã chữ/số, đồng thời tránh chỉ mục B-tree trên chuỗi gốc quá dài.
+PostgreSQL dùng pgvector `vector(384)` với HNSW/cosine; GIN trigram cho tên/alias/template và GIN full-text `simple` cho template. Posting và numeric feature dùng digest để tránh giới hạn B-tree với chuỗi dài; truy vấn kiểm tra cả digest và chuỗi gốc.
 
-Chỉ mục bổ sung: FK theo khách hàng/mẫu; GIN trigram trên tên chuẩn/bí danh/template; GIN full-text `to_tsvector('simple', template_text)`; HNSW cosine trên vector; hash nội dung hard negative và hash unique receipt.
+FK/UNIQUE bảo vệ quan hệ; các mã cũ vẫn dùng VARCHAR(100) để nâng cấp tương thích, nhưng mọi đường nhập/sửa hồ sơ mới kiểm tra sáu số tại ứng dụng. Công cụ reindex khôi phục số 0 đầu cho nhãn cũ hợp lệ. Không tự cắt mã dài hay sửa dữ liệu nguồn bị Excel làm tròn.
 
-Default ORM như digest/count/confidence được Python cấp khi ghi. DDL không cung cấp mọi server default: nhập trực tiếp bằng SQL phải cung cấp các cột NOT NULL, tính đúng digest và bảo đảm quan hệ/chỉ mục nghiệp vụ. Nên thêm mẫu qua giao diện hoặc CSV học.
+Phần lớn default do SQLAlchemy cấp khi ghi; SQL standalone không phải bộ INSERT mẫu. Nếu ghi SQL thủ công, phải cung cấp các trường NOT NULL không có server default và giữ cùng quy tắc nghiệp vụ.
 
-## Quyền quản lý trên web
+## Không lưu lịch sử đối soát trong database
 
-Xem/tìm kiếm/phân trang/chi tiết **mọi bảng ứng dụng**. Khách hàng được thêm/sửa tên/xóa; liên kết mẫu được thêm biến thể/sửa/xóa. Mẫu chung được đặt tên/ghi chú/gán thu hộ hoặc tự trả; từng liên kết có thể giữ loại riêng. Các bảng kỹ thuật chỉ đọc để không sửa riêng vector/token/confidence làm knowledge mất nhất quán.
+Kết quả, kỳ thanh toán, báo cáo lỗi riêng dòng, tác vụ và thao tác duyệt nằm trong `runtime/working/` bằng JSON/JSONL. PostgreSQL chỉ lưu kiến thức, ví dụ đã xác nhận, thống kê và receipt. Cache embedding hoặc SQLite tạm khi đọc Excel không thay PostgreSQL và không là kho lịch sử nghiệp vụ.
 
-- Thêm biến thể: giữ mẫu cũ và học mẫu mới cho cùng khách hàng.
-- Sửa mẫu: phân tích lại số, tính embedding, xây postings; thay mẫu sai hoặc gộp vào mẫu tương thích đã có.
-- Xóa mẫu: xóa slots/features/postings; hard negative giữ khách hàng bị từ chối và bỏ liên kết tới mẫu đã xóa. Payer không còn dùng được dọn.
-- Xóa khách hàng: xóa knowledge liên quan, bao gồm receipt và negative của khách hàng.
-- File kết quả cũ giữ snapshot, không đổi theo quản lý knowledge. Khi xác nhận phải chọn hồ sơ hiện có hoặc đăng ký lại nếu khách hàng đã xóa.
+UI cho xem mọi bảng ứng dụng, tìm kiếm/phân trang/chi tiết. Được thêm/sửa/xóa khách hàng và liên kết mẫu; chỉnh tên/ghi chú/loại mẫu giao dịch; xem/xóa thành viên thu hộ. Các bảng slots/postings/receipt hỗ trợ chỉ xem. Xóa khách hàng dọn liên kết/số/receipt/bí danh thuộc người đó; xóa liên kết không xóa mẫu chung còn dùng bởi người khác. Nhập lại tệp đã duyệt có thể khôi phục kiến thức vừa xóa.
 
-Sửa/xóa knowledge bị chặn khi có tác vụ đang chạy hoặc xác nhận chờ hoàn tất. API ghi dùng advisory lock phối hợp import/xác nhận.
+Quản trị có thể xác nhận/xóa bí danh khách hàng, thêm bí danh ngân hàng, gỡ chặn cách ghép và xem/hoàn tác thay đổi đủ điều kiện. Xem [cơ chế tương tác](interactive-knowledge.md) về revision, audit, namespace và giới hạn quyền.
 
-Nguồn: [schema SQL hiện tại](../sql/create_current.sql), [ORM](../app/db.py), [quy trình tìm và học](matching-and-learning.md).
+## Bộ nhớ nội dung đã xác nhận
+
+`recurring_links` giữ cả A–B của nội dung cũ và A của nội dung mới cụ thể hơn. Học thêm không thay thế liên kết cũ. Bảng này chứa ví dụ kiến thức đã duyệt, không chứa các dòng đối soát chưa xác nhận. UI “Nội dung đã xác nhận” chỉ xem; sửa/xóa qua liên kết mẫu có xác nhận và nhật ký. Xem [quy tắc nhận lại và giới hạn](recurring-recognition.md).
+
+Kết quả tên/entity của ví dụ đã duyệt lưu tại `recurring_links.signature.name_extraction` (JSONB). Các offset luôn ứng với `raw_example` của bản ghi; entity không thay đổi chữ ký tra cứu. Lưu mẫu tự trả không yêu cầu ID xuất hiện trong nội dung và không phụ thuộc việc NER có tìm thấy tên hay không. Không cần migration cho trường JSON này.

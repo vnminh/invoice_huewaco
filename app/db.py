@@ -86,6 +86,7 @@ class PaymentTemplate(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     template_text: Mapped[str] = mapped_column(Text)
     structure: Mapped[str] = mapped_column(Text)
+    channel_key: Mapped[str] = mapped_column(Text, default='unknown', index=True)
     display_name: Mapped[str] = mapped_column(Text, default='')
     description: Mapped[str] = mapped_column(Text, default='')
     payment_mode: Mapped[str] = mapped_column(String(16), default='unknown')
@@ -107,6 +108,11 @@ class Pattern(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey('customers.id'), index=True)
     template_id: Mapped[int] = mapped_column(ForeignKey('payment_templates.id'), index=True)
+    channel_key: Mapped[str] = mapped_column(Text, default='unknown', index=True)
+    normalizer_version: Mapped[str] = mapped_column(Text, default='')
+    # Approved labels are authoritative, even when codes mentioned in the text differ.
+    # These diagnostics affect matching, never whether an approved example may be learned.
+    label_metadata: Mapped[dict] = mapped_column(DOC, default=dict)
     payment_mode: Mapped[str] = mapped_column(String(16), default='unknown')
     provider_kind: Mapped[str] = mapped_column(String(16), default='unknown')
     provider_name: Mapped[str] = mapped_column(Text, default='')
@@ -130,6 +136,18 @@ class Pattern(Base):
                      CheckConstraint("payment_mode IN ('unknown', 'proxy', 'self')", name='ck_patterns_payment_mode'),
                      CheckConstraint("provider_kind IN ('unknown', 'bank', 'wallet', 'other')", name='ck_patterns_provider_kind'),
                      Index('ix_patterns_template_customer', 'template_id', 'customer_id'))
+
+
+class CollectionMember(Base):
+    """Learned customers of a provider settlement layout, without duplicate vectors."""
+    __tablename__ = 'collection_memberships'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey('payment_templates.id'), index=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey('customers.id'), index=True)
+    seen_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_period: Mapped[str] = mapped_column(String(7), default='unknown')
+    last_seen: Mapped[str] = mapped_column(String(40), default=now)
+    __table_args__ = (UniqueConstraint('template_id', 'customer_id', name='uq_collection_membership'),)
 
 
 class NumericSlot(Base):
@@ -180,16 +198,38 @@ class HardNegative(Base):
     __table_args__ = (UniqueConstraint('transaction_fingerprint', 'customer_id'),)
 
 
+class RecurringLink(Base):
+    """A confirmed, customer-specific observation; not a filtered-result history."""
+    __tablename__ = 'recurring_links'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pattern_id: Mapped[int] = mapped_column(ForeignKey('transaction_patterns.id'), index=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey('customers.id'), index=True)
+    channel_key: Mapped[str] = mapped_column(Text)
+    signature_hash: Mapped[str] = mapped_column(String(64))
+    signature: Mapped[dict] = mapped_column(DOC)
+    raw_example: Mapped[str] = mapped_column(Text)
+    source_file: Mapped[str] = mapped_column(Text, default='')
+    source_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    example_date: Mapped[str] = mapped_column(String(40), default='')
+    seen_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_period: Mapped[str] = mapped_column(String(7), default='unknown')
+    last_seen: Mapped[str] = mapped_column(String(40), default=now)
+    __table_args__ = (UniqueConstraint('pattern_id', 'signature_hash', name='uq_recurring_pattern_signature'),
+                     Index('ix_recurring_channel_signature', 'channel_key', 'signature_hash'))
+
+
 class IdSlotStat(Base):
     """Learned from confirmed narratives: how often a number in this local layout is the customer ID."""
     __tablename__ = 'customer_id_slots'
     id: Mapped[int] = mapped_column(primary_key=True)
-    context: Mapped[str] = mapped_column(Text, unique=True)
+    context: Mapped[str] = mapped_column(Text)
+    channel_key: Mapped[str] = mapped_column(Text, default='unknown')
     hits: Mapped[int] = mapped_column(Integer, default=0)
     total: Mapped[int] = mapped_column(Integer, default=0)
     example: Mapped[str] = mapped_column(Text, default='')
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
-    __table_args__ = (CheckConstraint('hits >= 0 AND hits <= total', name='ck_id_slots_counts'),)
+    __table_args__ = (CheckConstraint('hits >= 0 AND hits <= total', name='ck_id_slots_counts'),
+                     UniqueConstraint('channel_key', 'context', name='uq_id_slots_channel_context'))
 
 
 class Metadata(Base):
@@ -204,6 +244,30 @@ class KnowledgeReceipt(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey('customers.id'))
     period: Mapped[str] = mapped_column(String(7))
+
+
+class BankAlias(Base):
+    __tablename__ = 'bank_aliases'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alias: Mapped[str] = mapped_column(String(100))
+    normalized_alias: Mapped[str] = mapped_column(String(100), unique=True)
+    channel_key: Mapped[str] = mapped_column(String(40), index=True)
+    note: Mapped[str] = mapped_column(Text, default='')
+    used_at: Mapped[str] = mapped_column(String(40), default='')
+
+
+class KnowledgeChange(Base):
+    """Knowledge corrections only; never reconciliation rows or uploaded result history."""
+    __tablename__ = 'knowledge_changes'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    action: Mapped[str] = mapped_column(String(60))
+    entity_key: Mapped[str] = mapped_column(String(160), index=True)
+    before: Mapped[dict] = mapped_column(DOC)
+    after: Mapped[dict] = mapped_column(DOC)
+    reversible: Mapped[bool] = mapped_column(default=False)
+    reverted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), default=now, index=True)
 
 
 def make_engine(url: str):

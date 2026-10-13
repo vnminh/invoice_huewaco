@@ -11,11 +11,12 @@ import sqlite3
 import tempfile
 import time
 
-from .core import Core, fingerprint, posting_equal
+from .core import Core, fingerprint
 from .db import Base, Customer, make_engine, sessions
 from .excel import ExcelTransaction, StreamingWorkbook
 from .normalize import fold
-from .knowledge import frozen_knowledge_info
+from .knowledge import frozen_knowledge_info, import_confirmed
+from .identifiers import allocation_names, confirmed_customer_ids
 from .platform_utils import process_peak_rss_mb
 
 
@@ -50,7 +51,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
         reconciliation.executescript('''
             CREATE TABLE raw (row_index INTEGER PRIMARY KEY,key TEXT,raw TEXT,reference TEXT,date TEXT,amount REAL,debit REAL);
             CREATE INDEX raw_key ON raw(key);
-            CREATE TABLE truth (row_index INTEGER PRIMARY KEY,key TEXT,raw TEXT,customer_id TEXT,name TEXT,date TEXT,amount REAL,payer TEXT,label_status TEXT);
+            CREATE TABLE truth (row_index INTEGER,key TEXT,raw TEXT,customer_id TEXT,name TEXT,date TEXT,amount REAL,payer TEXT,label_status TEXT);
             CREATE INDEX truth_key ON truth(key);
         ''')
         try:
@@ -61,9 +62,14 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                             reconciliation.executemany('INSERT INTO raw VALUES (?,?,?,?,?,?,?)',
                                 [(t.row_index, reconciliation_key(t.raw), t.raw, t.reference, t.date, t.amount, t.debit) for t in batch])
                         else:
+                            labeled = []
+                            for t in batch:
+                                ids = confirmed_customer_ids(t.customer_id) if t.label_status == 'confirmed' else [t.customer_id]
+                                for cid, name in zip(ids, allocation_names(ids, t.customer_name)):
+                                    labeled.append((t.row_index, reconciliation_key(t.raw), t.raw, cid, name,
+                                                    t.date, t.amount, t.payer, t.label_status))
                             reconciliation.executemany('INSERT INTO truth VALUES (?,?,?,?,?,?,?,?,?)',
-                                [(t.row_index, reconciliation_key(t.raw), t.raw, t.customer_id, t.customer_name,
-                                  t.date, t.amount, t.payer, t.label_status) for t in batch])
+                                                      labeled)
                         counts[kind + '_rows'] += len(batch)
                         reconciliation.commit()
                         if progress:
@@ -106,27 +112,13 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                 if Path(training_path).resolve() == Path(truth_path).resolve():
                     raise ValueError('Training file must be separate from test ground truth')
                 earliest_test = reconciliation.execute('SELECT min(date) FROM raw').fetchone()[0]
-                with StreamingWorkbook(training_path) as workbook:
-                    training_sheets = workbook.confirmed_sheets()
-                    if not training_sheets:
-                        raise ValueError('Training workbook has no labeled sheets with an IDKH header')
-                    for sheet in training_sheets:
-                        for batch in workbook.batches(sheet=sheet, batch_size=batch_size):
-                            with factory.begin() as session:
-                                for transaction in batch:
-                                    counts['training_source_rows'] += 1
-                                    if transaction.label_status != 'confirmed':
-                                        counts['training_' + transaction.label_status + '_rows'] += 1
-                                        continue
-                                    if not transaction.customer_id:
-                                        raise ValueError(f'Training sheet {sheet} needs confirmed customer labels')
-                                    if transaction.date and transaction.date[:10] >= earliest_test[:10]:
-                                        raise ValueError('Training must precede all test transactions')
-                                    if core.learn(session, transaction, transaction.customer_id, transaction.customer_name):
-                                        counts['training_rows'] += 1
-                                        training_payers[transaction.payer] += 1
-                            if progress:
-                                progress(dict(counts))
+                trained = import_confirmed(engine, core, training_path, batch_size, progress,
+                                           before=earliest_test[:10] if earliest_test else None)
+                training_sheets = trained['sheets']
+                training_payers.update(trained['payers'])
+                counts['training_rows'] = trained['counts'].get('learned', 0)
+                counts['training_source_rows'] = trained['counts'].get('processed', 0)
+                counts['training_errors'] = trained['counts'].get('errors', 0)
             else:
                 training = reconciliation.execute('''
                     SELECT r.row_index,r.raw,r.date,r.amount,l.customer_id,l.name
@@ -137,7 +129,7 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                 while batch := training.fetchmany(batch_size):
                     with factory.begin() as session:
                         for row_index, raw, date, amount, customer_id, name in batch:
-                            core.learn(session, ExcelTransaction(row_index, raw, date=date, amount=amount), customer_id, name)
+                            core.learn(session, ExcelTransaction(row_index, raw, date=date, amount=amount, payer=test_sheet), customer_id, name)
                             counts['training_rows'] += 1
                     if progress:
                         progress(dict(counts))
@@ -151,7 +143,6 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                 WHERE substr(r.date,1,10) >= ? ORDER BY r.date,r.row_index''', ('' if training_path or saved_knowledge else cutoff,))
             resources.callback(heldout.close)
             from .core import id_key
-            from .db import Posting
             from sqlalchemy import select
             with (output_dir / 'predictions.csv').open('w', encoding='utf-8-sig', newline='') as out, \
                  (output_dir / 'evidence.jsonl').open('w', encoding='utf-8') as evidence_out, factory() as session:
@@ -185,13 +176,12 @@ def run_benchmark(raw_path, truth_path, output_dir, cutoff='2026-07-22', batch_s
                         positive = bool(label_count) and amount > 0 and debit == 0
                         truth_id = truth_id if positive else None
                         # Debits are operational exclusions, independent of knowledge scoring.
-                        result = core.classify(session, raw) if amount > 0 and debit == 0 else {
+                        result = core.classify(session, raw, test_sheet) if amount > 0 and debit == 0 else {
                             'customer_id': None, 'score': 0, 'decision': 'reject'}
                         counts['extractor_' + result.get('normalization', {}).get('extraction', {}).get('status', 'not_used')] += 1
                         included = result['decision'] in ('auto_accept', 'review')
                         correct = included and positive and id_key(result['customer_id']) == id_key(truth_id)
-                        known = bool(positive and session.scalar(select(Posting.id).where(
-                            posting_equal('id:' + id_key(truth_id))).limit(1)))
+                        known = bool(positive and id_key(truth_id) in known_keys)
                         counts['heldout_positive' if positive else 'heldout_negative'] += 1
                         if positive:
                             counts['seen_customer_positives' if known else 'unseen_customer_positives'] += 1

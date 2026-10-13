@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from threading import RLock
 
-from .bank_content import mb_water_fields, valid_name
+from .bank_content import agr_water_fields, mb_water_fields, valid_name
 from .normalize import fold
 
 DEFAULT_NER_MODEL = 'NlpHUST/ner-vietnamese-electra-base'
@@ -21,8 +21,8 @@ def name_key(name):
 
 
 def bank_name_entities(raw):
-    fields = mb_water_fields(raw)
-    if not fields:
+    fields = mb_water_fields(raw) or agr_water_fields(raw)
+    if not fields or not fields['name']:
         return []
     return [{'name': fields['name'], 'label': 'NAME', 'score': None, 'source': 'bank_field',
              'start': fields['name_span'][0], 'end': fields['name_span'][1]}]
@@ -89,7 +89,7 @@ class NameExtractor:
 
     def learning_signature(self):
         # Completed imports may need alias enrichment without relearning patterns.
-        return hashlib.sha256(repr(('name-alias-v1', self.enabled, self.name,
+        return hashlib.sha256(repr(('name-alias-v3-bank-fields', self.enabled, self.name,
                                    self.revision, self.min_score)).encode('utf-8')).hexdigest()
 
     def _inputs(self, raw):
@@ -106,7 +106,7 @@ class NameExtractor:
             start, end = fields['receiver_span']
             chars[start:end] = [' '] * (end - start)
         inputs = [(''.join(chars), None)]
-        if fields:
+        if fields and fields['name']:
             prefix = 'Người chuyển tiền: '
             inputs.append((prefix + fields['name'], {'input_start': len(prefix),
                 'raw_start': fields['name_span'][0], 'length': len(fields['name'])}))

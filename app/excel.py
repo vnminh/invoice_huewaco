@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from .normalize import fold
+from .identifiers import confirmed_customer_ids
 from .row_errors import ROW_DATA_ERRORS, RowErrors
 
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -119,7 +120,7 @@ def label_status(customer_id, name):
 
 
 # Aliases use folded text; columns are determined per sheet, never by bank name.
-LAYOUT_VERSION = 'bank-layout-v2-customer-id-aliases'
+LAYOUT_VERSION = 'bank-layout-v3-confirmed-multi-customer'
 HEADER_ALIASES = {
     'raw': ('mo ta giao dich', 'mo ta', 'dien giai', 'noi dung giao dich', 'noi dung',
             'lenh goc ngan hang', 'ebl', 'noidung', 'transaction description', 'description', 'trans detail',
@@ -158,11 +159,11 @@ STANDARD_LAYOUTS = {
         {'key': 'LOAIDONVITHUHO', 'description': 'bank, wallet, other hoặc unknown.', 'required': False, 'optional_group': 'payment'},
         {'key': 'DONVITHUHO', 'description': 'Tên ngân hàng/ví thu hộ.', 'required': False, 'optional_group': 'payment'}]},
     'confirmed': {'title': 'Bố cục tệp học dữ liệu', 'columns': [
-        {'key': 'IDKH', 'description': 'Mã khách hàng đã kiểm tra (Text, giữ số 0 đầu). ko = bỏ qua.', 'aliases': 'Mã KH, MaKH', 'required': True},
+        {'key': 'IDKH', 'description': 'Mã 6 chữ số đã kiểm tra; nhiều mã cách nhau dấu phẩy. ko = bỏ qua.', 'aliases': 'Mã KH, MaKH', 'required': True},
         {'key': 'NOIDUNG', 'description': 'Nội dung chuyển tiền nguyên văn.', 'aliases': 'EBL, Lệnh gốc ngân hàng', 'required': True},
         {'key': 'TENKH', 'description': 'Tên khách hàng; có thể trống.', 'aliases': 'Đơn vị chuyển tiền', 'required': False},
         {'key': 'NGAY', 'description': 'Ngày giờ chuyển khoản.', 'aliases': 'Ngày chuyển NH', 'required': False},
-        {'key': 'SOTIEN', 'description': 'Số tiền của khách hàng này.', 'aliases': 'Số tiền', 'required': False},
+        {'key': 'SOTIEN', 'description': 'Số tiền đã xác nhận, không âm; không tự chia khi có nhiều khách hàng.', 'aliases': 'Số tiền', 'required': False},
         {'key': 'NGANHANG', 'description': 'Ngân hàng/kênh (MoMo, Payoo… = thu hộ).', 'aliases': 'Ngân hàng', 'required': False},
         {'key': 'REFERENCE', 'description': 'Số tham chiếu (Text).', 'required': False},
         {'key': 'KIEUTHANHTOAN', 'description': 'proxy, self hoặc unknown; trống = theo kênh/mẫu.', 'required': False, 'optional_group': 'payment'},
@@ -316,17 +317,13 @@ class ConfirmedCsv:
                 raw = original
         if not raw.strip() or len(raw) > 32767:
             raise ValueError('Nội dung giao dịch trống hoặc vượt quá 32.767 ký tự.')
-        if not customer_id or len(customer_id) > 100:
-            raise ValueError('Mã khách hàng trống hoặc vượt quá 100 ký tự.')
-        try:
-            amount = float((record.get('SOTIEN') or '0').strip())
-            if not math.isfinite(amount) or amount < 0:
-                raise ValueError()
-        except ValueError as error:
-            raise ValueError('Số tiền trong CSV chưa hợp lệ.') from error
+        customer_id = ', '.join(confirmed_customer_ids(customer_id))
+        amount = parse_money(record.get('SOTIEN'))
+        if amount is None or amount < 0:
+            raise ValueError('Số tiền trong CSV chưa hợp lệ.')
         return ExcelTransaction(row_index, raw, date=date_text(record.get('NGAY')),
             amount=amount, customer_id=customer_id, customer_name=record.get('TENKH') or '',
-            payer=record.get('NGANHANG') or record.get('SHEET') or 'BIDV', source=self.path.name,
+            payer=record.get('NGANHANG') or record.get('SHEET') or 'unknown', source=self.path.name,
             reference=record.get('REFERENCE') or '', sheet=record.get('SHEET') or 'CSV', label_status=status,
             payment_mode=record.get('KIEUTHANHTOAN') or '', provider_kind=record.get('LOAIDONVITHUHO') or '',
             provider_name=record.get('DONVITHUHO') or '')
@@ -567,8 +564,7 @@ class StreamingWorkbook:
                 # Text kept for reconciliation/reporting only; learning ignores these statuses.
                 return ExcelTransaction(row_index, raw[:32767], date=date_text(get('date')), customer_id=customer_id,
                                        source=source, sheet=sheet, label_status=status)
-            if customer_id.startswith('#') or len(customer_id) > 100:
-                raise ValueError('Mã khách hàng chưa hợp lệ hoặc vượt quá 100 ký tự.')
+            customer_id = ', '.join(confirmed_customer_ids(customer_id))
             if len(raw) > 32767:
                 raise ValueError('Nội dung giao dịch vượt quá 32.767 ký tự.')
             amount = parse_money(get('amount') if 'amount' in columns else get('credit'))

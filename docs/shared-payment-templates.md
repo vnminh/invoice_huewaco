@@ -1,93 +1,52 @@
-# Mẫu chung, liên kết khách hàng và dịch vụ thu hộ
+# Mẫu giao dịch và thu hộ
 
-Schema tách **bố cục dùng chung** khỏi **bằng chứng thuộc từng khách hàng**. Nội dung do dịch vụ ngân hàng/ví tạo có thể giống nhau cho hàng nghìn khách hàng; khớp bố cục này chưa xác định người cần ghi nhận thanh toán.
+Một mẫu có thể được nhiều khách hàng sử dụng; một người có nhiều mẫu. Phần chung lưu trong `payment_templates`, số/ví dụ riêng lưu trong `transaction_patterns`. Không gộp số của nhiều người vào cùng một bản ghi số riêng.
 
-```mermaid
-erDiagram
-    payment_templates ||--o{ transaction_patterns : has_links
-    customers ||--o{ transaction_patterns : has_evidence
-    transaction_patterns ||--o{ numeric_slots : has_slots
-    transaction_patterns ||--o{ numeric_features : has_values
-    transaction_patterns ||--o{ retrieval_postings : indexed_by
-```
+## Phân biệt kiểu thanh toán
 
-## Các bảng và quan hệ
-
-| Bảng | Trách nhiệm |
+| Kiểu | Ý nghĩa |
 | --- | --- |
-| `payment_templates` | Bố cục chung: `template_text`, `structure`, fingerprint, tên quản lý, ghi chú, loại thanh toán mặc định đã được admin xác nhận, đơn vị thu hộ và ngày tạo. Không lưu các mã khách hàng/hợp đồng như giá trị chung. |
-| `transaction_patterns` | Liên kết/bằng chứng giữa `customer_id` và `template_id`: ví dụ nguyên văn, mẫu riêng còn các chi tiết cá nhân, vector, nguồn, độ tin cậy và số lần gặp. |
-| `numeric_slots` | Thống kê slot của **liên kết khách hàng**, qua `pattern_id`. |
-| `numeric_features` | Các giá trị đầy đủ theo slot/vai trò của **liên kết khách hàng**, qua `pattern_id`. |
+| `proxy` | Ngân hàng, ví hoặc dịch vụ thu hộ trả thay khách hàng. |
+| `self` | Khách hàng/người dùng tự chuyển khoản. |
+| `unknown` | Chưa có đủ căn cứ để phân biệt. |
 
-Một mẫu chung có nhiều khách hàng; một khách hàng có nhiều mẫu chung. Nếu một khách hàng dùng cùng bố cục với nhiều hợp đồng hoặc mã quan trọng, có thể có nhiều bản ghi liên kết, mỗi bản ghi giữ bộ định danh riêng. Unique `(customer_id, fingerprint)` của liên kết được giữ để tránh gộp số quan trọng. Không chuyển numeric features sang trỏ trực tiếp tới mẫu chung, vì như vậy giá trị của khách hàng A có thể bị dùng cho B.
+`provider_kind` phân biệt bank/wallet/other/unknown; `provider_name` là tên đơn vị. Đây là thông tin kiểu thanh toán, không phải điều kiện xác định duy nhất khách hàng.
 
-`transaction_patterns.template_text` tiếp tục là biểu diễn riêng của ví dụ thuộc khách hàng, dùng cho đối chiếu chi tiết; `payment_templates.template_text` là bố cục chung để quản lý/tìm ứng viên. Embedding cũng giữ ở liên kết, bảo toàn những chi tiết giúp phân biệt khách hàng. Việc tách bảng không yêu cầu dựng lại vector của kho.
+Nguồn nhãn theo thứ tự khi học: nhãn trong dòng đã duyệt; mặc định mẫu được admin gán; kênh dịch vụ thu hộ rõ như MoMo/Payoo/VNPAY; bố cục thu hộ cố định đã nhận diện. Nếu không có, giữ unknown. Nhãn tự trả xóa đơn vị thu hộ. Các nhãn tiếng Việt như **Ngân hàng thu hộ(mẫu cố định)**, **trả qua ví điện tử**, **người dùng tự chuyển khoản** được chấp nhận. Nhãn tùy chọn chưa hiểu không làm mất dòng học IDKH đã duyệt.
 
-Mẫu chung giữ nguyên các placeholder số theo thứ tự và cấu trúc vai trò. Tên hợp lệ từ NER hoặc tên khách hàng đã xác nhận có thể được thay bằng `<NAME>` **chỉ trong bố cục chung**. Không sửa nội dung gốc, không đổi số thành tên, không cắt số 0 đầu. Khóa mẫu chung là SHA-256 của `shared_shape + chr(31) + structure`; kiểm tra lại đầy đủ nội dung/cấu trúc sau khi tra hash. Chỉ gộp bố cục chung chính xác; không tự gộp các mẫu gần giống 90% làm mất khác biệt định danh.
+Đối soát có thể gợi ý proxy từ bố cục cố định, kênh ví hoặc liên kết lịch sử đã khớp chắc. Bằng chứng ghi rõ nguồn; người dùng được sửa trước xác nhận. Tên ngân hàng chung, người gửi hoặc chỉ chữ giống nhau không đủ chứng minh thu hộ/tự trả. Admin có thể sửa các suy luận bố cục không phù hợp thực tế.
 
-## Proxy và self
+## Bố cục và liên kết riêng
 
-Kiểu thanh toán lưu trên **mẫu chung** để quản trị viên gán mặc định, đồng thời lưu trên **từng liên kết** để hỗ trợ ngoại lệ. Cùng bố cục có thể được dùng theo nhiều cách:
+Mẫu chung có fingerprint gồm **ngân hàng/kênh, shared shape, structure**. Tên đã xác nhận/đọc rõ được che trong shared shape; placeholders số giữ thứ tự. Các liên kết giữ khách hàng, ví dụ gốc, số theo slot, embedding, nguồn, độ lặp và loại thanh toán riêng. Một người có thể có nhiều liên kết dưới một mẫu khi hợp đồng/mã ổn định khác nhau.
 
-- `proxy`: thu hộ qua dịch vụ ngân hàng, ví điện tử hoặc bên khác.
-- `self`: khách hàng tự chuyển tiền.
-- `unknown`: chưa có căn cứ; không tự coi là self.
+Không ghi đè chỉ vì template giống trên 90%. Số định danh khác phải được giữ thành biến thể, số tham chiếu biến đổi có thể bổ sung vào slot cùng liên kết. IDKH sáu số rõ và đã biết ưu tiên hơn HD; một HD được phép có nhiều IDKH. Trong bố cục cụ thể, HD sáu số có thể được học là IDKH thông qua nhãn đã xác nhận và context ngân hàng.
 
-`provider_kind` là `bank`, `wallet`, `other` hoặc `unknown`; `provider_name` là tên đơn vị thu hộ. Các trường này mô tả bên trung gian, không phải ID khách hàng. Với self, thông tin đơn vị thu hộ được để trống. Ngân hàng/kênh nhận biết từ sheet vẫn lưu ở payer riêng; tên sheet BIDV/MB không chứng minh giao dịch là thu hộ.
+Mẫu dùng chung không cho biết ai trả. So khớp kiểm tra số đầy đủ/đúng vai trò/đúng thứ tự và chủ sở hữu toàn kho. Tên và tài khoản trung gian chỉ hỗ trợ tìm. Thiếu bằng chứng thì vẫn hiển thị gợi ý liên quan cho người duyệt, không tự chấp nhận.
 
-Không suy thu hộ chỉ từ tên sheet, tài khoản ngân hàng hoặc số khách hàng dùng mẫu. Protocol BIDV O@L chỉ tạo gợi ý thu hộ, không tự gán nhãn proxy. Loại thực tế lấy từ nhãn nguồn đã kiểm tra, admin gán trên mẫu/liên kết, hoặc liên kết lịch sử đã xác nhận khi giao dịch khớp chính xác bố cục chung và có bằng chứng số riêng đủ mạnh để được chấp nhận. Thiếu căn cứ giữ unknown. NER chỉ trích tên, không quyết định thu hộ/tự trả. Có thể cung cấp ba cột tùy chọn `KIEUTHANHTOAN`, `LOAIDONVITHUHO`, `DONVITHUHO` khi học/đối soát. Giá trị lần lượt là các mã liệt kê ở trên và tên đơn vị; không dùng tên người trả tiền thay IDKH.
+## Quyết toán tổng hợp và danh sách khách hàng
 
-## So khớp để tránh chọn nhầm khách hàng
+Một khoản của ví/dịch vụ có thể được phân bổ thành hàng trăm dòng trong tệp đã duyệt. Khi nhóm liền nhau có cùng nội dung, tham chiếu riêng và ít nhất 10 người, hệ thống lưu gọn mẫu/receipt/hồ sơ và `collection_memberships`. Mỗi membership duy nhất theo mẫu/khách hàng, có count/lần gặp gần nhất. Không tạo các vector giống nhau cho từng người từ một nội dung không nêu từng người.
 
-1. Đối chiếu IDKH trước trên toàn kho; chưa biết/nhiều hồ sơ vẫn thủ công 0%. Một HD được phép có nhiều IDKH. Khi IDKH rõ ràng đã biết, HD không phủ định IDKH; các mã định danh khác vẫn kiểm tra mâu thuẫn. Không có IDKH thì HD dùng chung không đủ xác định duy nhất khách hàng.
-2. Đường `shared_template` tìm bố cục chung qua posting `template:<hash>`, trọng số RRF 2. Đây là đường tìm ứng viên, không phải bằng chứng chấp nhận.
-3. Rerank **liên kết khách hàng**, dùng ví dụ, số đầy đủ, vai trò/định dạng và thứ tự của chính liên kết đó.
-4. Đếm khách hàng của mẫu chung trên toàn kho bằng `template_id`, không giới hạn trong tập ứng viên.
-5. Nếu nội dung có gợi ý thu hộ, giao dịch/liên kết là proxy, mẫu có nhiều khách hàng, hoặc cả hai phía còn unknown, phải có bằng chứng số riêng đủ tin cậy: ID rõ ràng khớp hồ sơ, hợp đồng duy nhất đã khớp, token khách hàng đã xác nhận đúng vị trí, hoặc mã chữ/số duy nhất đã đối chiếu. Những kiểm tra thiếu/đổi/chệch thứ tự vẫn có thể chặn chấp nhận.
-6. Không đủ bằng chứng này thì trả kiểm tra thủ công 0%, dù tên, tài khoản trung gian hoặc bố cục rất giống. Self vẫn chịu kiểm tra định danh/tài khoản dùng chung, tên trùng và khách hàng cạnh tranh.
+Đối soát lần sau hiển thị khoản tổng hợp và danh sách khách hàng từng liên quan; yêu cầu bảng kê của lần hiện tại. Danh sách không có nghĩa mọi thành viên đều được trả ở lần này. Người có IDKH rõ trong một giao dịch riêng vẫn được tìm trong registry, kể cả chưa có pattern riêng.
 
-Do đó dữ liệu ban đầu chỉ có một khách hàng trong dịch vụ thu hộ cũng không làm tài khoản ngân hàng trung gian thành định danh riêng của khách hàng đó. Với dữ liệu self cũ chưa có loại, có thể xác nhận self trong quản lý liên kết khi đã kiểm tra; không tự suy self để nâng điểm.
+Khoản tự trả nhiều đồng hồ vẫn học đầy đủ từng liên kết. Nhiều IDKH nhắc đến chỉ là thông tin gợi ý; người dùng xác nhận tập người thực nhận. Không tự chia tiền.
 
-Evidence trả `shared_template_id`, `shared_template`, `shared_template_customer_count`, `matched_payment_mode`, thông tin đơn vị và `numeric_customer_evidence`, bên cạnh các đối chiếu số hiện có. UI kiểm tra cho thấy mẫu chung/số khách hàng dùng mẫu. Kết quả cũ giữ đề xuất cũ; sửa kiến thức áp dụng cho các lần đối soát tiếp theo.
+## Quản lý trên UI
 
-## Quản lý trên web
+Vào **Quản lý kiến thức → Mẫu giao dịch**:
 
-Trong **Quản lý kiến thức**:
+1. Tìm kiếm và lọc kiểu thanh toán; mở Chi tiết để sửa tên/ghi chú hoặc gán Thu hộ/Tự trả/Chưa xác định.
+2. Xác nhận phạm vi rồi lưu: nhãn cập nhật mẫu và các liên kết hiện có. Liên kết mới không có nhãn riêng dùng mặc định của mẫu.
+3. Mở **Xem khách hàng dùng mẫu** để xem liên kết đầy đủ; **Khách hàng thu hộ** để xem roster tổng hợp.
+4. Sửa kiểu riêng ở liên kết nếu có ngoại lệ. Gán lại toàn mẫu sẽ thay ngoại lệ hiện có.
 
-1. Chọn **Mẫu giao dịch** để tìm mẫu, xem bố cục, số khách hàng/liên kết, đặt tên quản lý hoặc ghi chú.
-2. Chọn **Xem khách hàng dùng mẫu** để mở danh sách liên kết có phân trang.
-3. Trong một liên kết, xem/sửa ví dụ riêng, đối chiếu số riêng hoặc **Lưu kiểu thanh toán** chỉ cho liên kết đó.
-4. Ở mẫu chung, phần **Đánh dấu thu hộ / tự trả cho mẫu** mở sẵn. Chọn **Thu hộ qua ngân hàng / ví**, **Khách hàng tự trả** hoặc **Chưa xác định**; điền loại và tên đơn vị thu hộ nếu có. Đánh dấu xác nhận phạm vi rồi bấm **Lưu loại của mẫu & áp dụng**. Backend lưu loại mặc định trên mẫu chung và cập nhật toàn bộ liên kết hiện có trong cùng transaction. Khi học liên kết mới cùng mẫu, nếu nguồn không cung cấp nhãn riêng thì dùng mặc định này. Thao tác không trộn số hoặc tăng lần học.
-5. Với ngoại lệ, mở liên kết và **Lưu kiểu thanh toán**: chỉ liên kết này đổi, không đổi loại mặc định của mẫu hay liên kết khác. Nhãn riêng trong tệp hoặc UI được ưu tiên; chọn unknown rõ ràng cũng được giữ. Gán lại loại toàn mẫu sẽ thay cả các ngoại lệ hiện có, nên cần kiểm tra checkbox phạm vi.
-6. Xóa liên kết chỉ xóa số/posting riêng của liên kết đó. Mẫu chung và các khách hàng khác được giữ. Chỉ được xóa mẫu chung khi không còn liên kết.
+**Cập nhật tất cả mẫu đang lọc** áp dụng cả trang chưa hiển thị. Backend kiểm tra revision, dấu phạm vi ID/nhãn và số mẫu/liên kết trước khi cập nhật trong một transaction; phạm vi đổi thì yêu cầu làm mới. Số liên kết bao gồm membership tổng hợp; các membership nhận loại từ mẫu. Thao tác gán loại không đổi IDKH/số hoặc tăng lần học.
 
-### Xác nhận kiểu thanh toán hàng loạt sau tìm kiếm/lọc
+Ở hồ sơ khách hàng có **Xem mẫu đã học**, **Xem mẫu thu hộ** và thêm mẫu mới. Thành viên thu hộ được xem/xóa riêng; xóa membership không xóa hồ sơ hay mẫu. Chỉ xóa mẫu chung khi không còn liên kết hoặc membership. Xóa dữ liệu có xác nhận; nhập lại nguồn đã duyệt có thể tạo lại quan hệ.
 
-Danh sách **Mẫu giao dịch** có bộ lọc `payment_mode` và nút **Cập nhật tất cả mẫu đang lọc**. Nút áp dụng cho toàn bộ kết quả, không chỉ 20 mẫu của trang hiện tại. Hộp xác nhận hiển thị số mẫu, số liên kết, chuỗi tìm kiếm và loại đang lọc; người dùng phải chọn loại mới và xác nhận phạm vi.
+## SQL
 
-API `POST /knowledge/templates/payment/bulk` nhận `q`, `filter_payment_mode`, `payment_mode`, thông tin đơn vị, `expected_count`, `expected_links` và `confirmed: true`. Cùng hàm query được dùng cho danh sách và bulk; không gửi giới hạn phân trang. Trong transaction có khóa ghi kiến thức, backend kiểm tra số lượng trước khi cập nhật. Phạm vi đổi thì trả 409 để người dùng làm mới. Liên kết được cập nhật trước mẫu, vì việc đổi loại/đơn vị mẫu có thể làm mẫu không còn khớp điều kiện lọc. Các thao tác SQL dùng subquery IDs, không tải toàn kho hoặc nội dung giao dịch vào RAM. Toàn bộ mẫu/liên kết được commit cùng nhau; số, receipts và thống kê học giữ nguyên. Loại mặc định đã lưu tiếp tục áp dụng cho liên kết mới thiếu nhãn riêng.
+Database mới chỉ chạy [create_current.sql](../sql/create_current.sql). Kho cũ đến 004 chạy [005](../sql/migrations/005_confirmed_evidence.sql), rồi reindex và nhập lại dữ liệu thu hộ tổng hợp để điền roster cũ. Sau v7/005 chạy thêm [006](../sql/migrations/006_interactive_knowledge.sql) để dùng quản trị bí danh/nhật ký. Xem [hướng dẫn nâng cấp](migration-and-storage.md) và [schema chi tiết](database-schema.md).
 
-Khi **Xác nhận & học**, UI cho chọn kiểu thanh toán và đơn vị thu hộ. Thông tin được ghi cùng xác nhận và có trong các tệp xuất. CSV nhập hỗ trợ ba cột tùy chọn về kiểu/đơn vị; tệp cũ thiếu những cột này vẫn đọc được. Bố cục chỉ xem trên UI; không tải mẫu hoặc xuất dữ liệu đã học. Receipt không phụ thuộc nhãn proxy/self để tránh tăng lần học khi chỉ chỉnh loại. Lựa chọn **Theo mẫu đã xác nhận (nếu có)** không đoán từ nội dung; dùng nhãn đã lưu hoặc giữ unknown nếu chưa có. Kết quả duyệt và CSV ghi loại thực tế đã lưu trên liên kết.
-
-## SQL từ đầu và nâng cấp
-
-Với database trống, chạy **chỉ `sql/create_current.sql`**. File đã có 11 bảng, FK, unique/check constraints, chỉ mục truy xuất và quyền cho `invoice_app` nếu tài khoản tồn tại. Không chạy init hoặc migration trước/sau file này. File không tạo database/login và không xóa dữ liệu hiện có.
-
-Windows PowerShell:
-
-```powershell
-psql -U postgres -h 127.0.0.1 -p 5432 -d invoice_filter -v ON_ERROR_STOP=1 -f "sql/create_current.sql"
-```
-
-Linux có thể dùng cùng lệnh TCP trên, hoặc chạy từ tài khoản người dùng có quyền đọc file:
-
-```bash
-sudo -u postgres psql -d invoice_filter -v ON_ERROR_STOP=1 < sql/create_current.sql
-```
-
-Với database phiên bản knowledge-only đã có dữ liệu, dừng ứng dụng, sao lưu rồi tự chạy `sql/migrations/003_shared_templates.sql`. Migration nhóm bố cục hiện có chính xác, gắn các liên kết tới mẫu chung và giữ nguyên IDs, numeric features, slots, receipts, vector và số lần gặp. Tài khoản ứng dụng được cấp quyền bảng/sequence mới nếu dùng login `invoice_app`. Script dùng [SHA-256 tích hợp của PostgreSQL](https://www.postgresql.org/docs/16/functions-binarystring.html).
-
-Backfill SQL giữ biểu diễn tên cũ; không chạy NER trong database. Có thể nhập lại tệp đã xác nhận sau nâng cấp để bổ sung alias và gắn liên kết sang bố cục có `<NAME>` khi trích được. Receipt ngăn tăng lại thống kê mẫu/số. Các mẫu/liên kết cũ mặc định unknown; script không tự gán thu hộ bằng dấu hiệu protocol. Không tự áp dụng migration từ backend.
-
-Cài dependency cập nhật rồi khởi động lại dịch vụ. Chỉ kiểm tra cú pháp/DDL sinh trên mock engine cho thay đổi này; chưa chạy model, backend, PostgreSQL hay benchmark theo yêu cầu của người dùng. Chưa có số liệu precision/F1 mới; các điều kiện chặn được thiết kế ưu tiên hạn chế ghép nhầm, có thể tăng số dòng cần duyệt.
+Khách hàng chỉ có trong registry/roster, chưa có mẫu thanh toán riêng phù hợp, được gợi ý với điểm thấp và yêu cầu duyệt; không tự ghép chỉ vì IDKH có tồn tại. Xác nhận của người dùng bổ sung mẫu riêng để lần sau có căn cứ đối chiếu.

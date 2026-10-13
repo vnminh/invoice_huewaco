@@ -21,7 +21,8 @@ def test_identity_matches_but_unseen_id_does_not(db):
         unknown = core.classify(session, 'REM Tfr Ac:5510593029 TT tien nuoc KH:998812 ky 07/2026')
         assert unknown['decision'] == 'manual_check'
         assert unknown['score'] == 0
-        assert unknown['customer_id'] is None
+        assert unknown['suggested_customer_id'] == '998812'
+        assert any(r['customer_id'] == '001545' for r in unknown['recommendations'])
 
 
 def test_prediction_does_not_learn_and_confirmation_learns_immediately(db):
@@ -48,7 +49,8 @@ def test_reject_stores_idempotent_hard_negative(db):
         raw = 'TT KH 001545 tien nuoc'
         result = {**core.classify(session, raw), 'raw': raw, 'entry_key': 'test:2'}
         core.review(session, result, False)
-        assert session.scalar(select(func.count(HardNegative.id))) == 1
+        # Reject the current text and its recurring signature (changing bank refs).
+        assert session.scalar(select(func.count(HardNegative.id))) == 2
         assert core.classify(session, 'TT KH 001545 tien nuoc')['decision'] == 'reject'
         core.review(session, result, False)
         assert session.scalar(select(HardNegative.count)) == 1

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 import re
-import unicodedata
+from .text import fold
+from .identifiers import CUSTOMER_ID
+from .bank_content import mb_water_fields
+from .payment_period import scan_periods
 
-NORMALIZER_VERSION = 'rules-v6-learned-id-slots'
-
-
-def fold(text: str) -> str:
-    text = unicodedata.normalize('NFKD', str(text)).lower().replace('đ', 'd')
-    return ''.join(c for c in text if not unicodedata.combining(c))
+NORMALIZER_VERSION = 'rules-v7-confirmed-evidence'
 
 
 # Dates need date/month syntax. A six-digit identifier by itself is never a date.
@@ -23,19 +22,19 @@ DATE = re.compile(
 # Keep digit-leading bank codes and all letter/number runs intact.
 TOKEN = re.compile(r'\d+(?:[.,]\d{3})+(?![a-z\d])|[a-z\d]+')
 CUSTOMER_LABEL = (r'(?:ma[\s_]*(?:so[\s_]*)?(?:khach[\s_]*hang|kh|danh[\s_]*bo)'
-                  r'|id[\s_]*kh|m[\s_]*kh|mk|danh[\s_]*bo|khach[\s_]*hang|kh'
+                  r'|id[\s_]*kh|m[\s_]*(?:s[\s_]*)?kh|mk|(?:ma[\s_]*|so[\s_]*)?danh[\s_]*bo|msdb|khach[\s_]*hang|kh'
                   r'|customer(?:[\s_]*(?:id|code|number))?|id)')
 IDENTIFIER_SEPARATOR = r'[\s:#=._\-\u2010-\u2015]*'
 CUSTOMER_CONTEXT = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'$')
-CUSTOMER_FIELD = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'(\d+)(?![a-z\d])')
-CUSTOMER_CONTINUATION = re.compile(r'\s*(?:[,;/+&]|va\b|and\b)\s*(\d+)(?![a-z\d]|\.\d)')
+CUSTOMER_FIELD = re.compile(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'(\d{6})(?![a-z\d]|[.,]\d{3}(?!\d))')
+CUSTOMER_CONTINUATION = re.compile(r'\s*(?:[,;/+&\-\u2010-\u2015]|va\b|and\b)\s*(\d{6})(?![a-z\d]|\.\d)')
 # "ID: 035285 035447 046165", "MA KH273426 282974", "mkh. 309876. 279225.": a list of
-# customer-ID-sized values after one label. Only same-length 4-6 digit runs continue it,
+# customer-ID-sized values after one label. Only separate six-digit runs continue it,
 # so a following date, amount, long reference or invoice number never joins the list.
-CUSTOMER_SPACE_CONTINUATION = re.compile(r'(?:\s+|\s*\.\s*)(\d{4,6})(?![a-z\d]|[./-]\d)')
+CUSTOMER_SPACE_CONTINUATION = re.compile(r'(?:\s+|\s*\.\s*)(\d{6})(?![a-z\d]|[./-]\d)')
 CONTEXT_UNIT = re.compile(r'[a-z\d]+|[^\sa-z\d]')
 # Learned customer-ID slots only consider customer-ID-sized digit runs.
-SLOT_VALUE = re.compile(r'\d{4,6}')
+SLOT_VALUE = CUSTOMER_ID
 SLOT_TYPES = {'UNKNOWN_NUMBER', 'CUSTOMER_ID', 'CONTRACT_ID', 'INVOICE_ID', 'REFERENCE_ID', 'LOCATION_NUMBER'}
 
 
@@ -115,7 +114,7 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         width = len(match[1])
         while True:
             continuation = CUSTOMER_CONTINUATION.match(lowered, end)
-            if not continuation and 4 <= width <= 6:
+            if not continuation and width == 6:
                 continuation = CUSTOMER_SPACE_CONTINUATION.match(lowered, end)
                 if continuation and len(continuation[1]) != width:
                     continuation = None
@@ -124,8 +123,13 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             customer_spans.append(continuation.span(1))
             end = continuation.end(1)
     protected.extend(customer_spans)
+    # One known export glues a bank suffix directly to a labeled customer ID.
+    # Split at the explicit bank marker, never by guessing lengths in other codes.
+    for m in re.finditer(r'(?<![a-z\d])' + CUSTOMER_LABEL + IDENTIFIER_SEPARATOR + r'(\d{6})(?=kbnnttsp_)', lowered):
+        customer_spans.append(m.span(1))
+        protected.append(m.span(1))
     contract_tokens = []
-    for m in re.finditer(r'(?<![a-z\d])' + CONTRACT_LABEL + IDENTIFIER_SEPARATOR + r'([a-z\d]+(?:[-/][a-z\d]+)*)', lowered):
+    for m in re.finditer(r'(?<![a-z\d])' + CONTRACT_LABEL + IDENTIFIER_SEPARATOR + r'([a-z\d]+(?:[-/._][a-z\d]+)*)', lowered):
         if re.match(r'(?:ky|thang|month)\d', m[1]) and DATE.match(lowered, m.start(1)):
             continue  # e.g. "Ma HD-Ky082026" gives a billing period, not a contract ID.
         value = re.split(r'-(?:020097|ctlnhidi)', m[1])[0]
@@ -133,19 +137,39 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             end = m.start(1) + len(value)
             contract_tokens.append(_Token(value, m.start(1), end))
             protected.append((m.start(1), end))
-    dates = [m for m in DATE.finditer(lowered) if not any(a <= m.start() < b for a, b in protected)]
+    periods = scan_periods(raw)
+    spans = periods['billing_spans'] + periods['date_spans']
+    spans += [m.span() for m in DATE.finditer(lowered)]
+    date_spans = sorted(set((a, b) for a, b in spans if not any(a < y and b > x for x, y in protected)))
     # Partial date ranges only when a clear day/range context is present.
-    occupied = [m.span() for m in dates]
+    occupied = list(date_spans)
     for m in re.finditer(r'\b(?:tu|den|ngay)\s+((?:0?[1-9]|[12]\d|3[01])[/.-](?:0?[1-9]|1[0-2]))(?![/\d])', lowered):
         if not any(a < m.end(1) and b > m.start(1) for a, b in occupied):
-            dates.append(m)
-    date_spans = sorted((m.start(1), m.end(1)) if m.lastindex else m.span() for m in dates)
+            date_spans.append(m.span(1))
+    # Union overlapping masks: a month list/range must not produce duplicate events.
+    merged = []
+    for a, b in sorted(date_spans):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+        else:
+            merged.append((a, b))
+    date_spans = merged
     masked = list(lowered)
     for start, end in date_spans:
         masked[start:end] = ' ' * (end - start)
     masked = ''.join(masked)
     roles = {span: 'CUSTOMER_ID' for span in customer_spans}
     roles.update({m.span(): 'CONTRACT_ID' for m in contract_tokens})
+    bank_fields = mb_water_fields(raw)
+    if bank_fields:
+        to_folded = lambda span: (len(fold(raw[:span[0]])), len(fold(raw[:span[1]])))
+        customer_span = to_folded(bank_fields['customer_span'])
+        roles[customer_span] = 'CUSTOMER_ID'
+        roles[to_folded(bank_fields['reference_span'])] = 'BANK_REFERENCE'
+        protocol_end = to_folded(bank_fields['protocol_span'])[1]
+        for m in TOKEN.finditer(masked[:protocol_end]):
+            if any(c.isdigit() for c in m.group()):
+                roles[m.span()] = 'BANK_PROTOCOL'
     invoice_codes = set()
     # BIDV O@L: protocol, reference, then IDKH. The invoice code may be absent.
     for m in re.finditer(r'o@l_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d{6})(?=_)', lowered):
@@ -172,6 +196,23 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             roles[m.span(1) if m.lastindex else m.span()] = 'BANK_REFERENCE'
     for m in re.finditer(r'mbvcb\.(\d+)\.(\d+)\.', lowered):
         roles[m.span(1)] = roles[m.span(2)] = 'BANK_REFERENCE'
+    # Agribank's collection fields repeat the six-digit customer code before the
+    # period; trailing bracket fields are bill amounts/references, not other IDs.
+    for m in re.finditer(r'ma_gd:(\d+)\|(\d{6}),\s*nuoc', lowered):
+        roles[m.span(1)] = 'BANK_REFERENCE'
+        roles[m.span(2)] = 'CUSTOMER_ID'
+        for repeated in re.finditer(r'\[(\d{6})\s+', lowered[m.end():]):
+            if repeated[1] == m[2]:
+                a, b = repeated.span(1)
+                roles[(m.end() + a, m.end() + b)] = 'CUSTOMER_ID'
+    for expression in (r'atbp:([a-z\d]+)', r'vcbcsh\.\s*(\d+)', r'\[bpment-ft-(\d+)\]'):
+        for m in re.finditer(expression, lowered):
+            roles[m.span(1)] = 'BANK_REFERENCE'
+    for expression in (r'\batbp:[a-z\d]+\s+tthd\s+nuoc\s+hue\s+(\d{6})(?!\d)',
+                       r'\but\s+(\d{6})\s+t\d{1,2}n20\d{2}\s+cap\s+nuoc\s+hue',
+                       r'\btien\s+nuoc\s+ma\s*(\d{6})(?![a-z\d])'):
+        for m in re.finditer(expression, lowered):
+            roles[m.span(1)] = 'CUSTOMER_ID'
     segments, numbers, text_group = [], [], []
     text_start = 0
     slot = 0
@@ -191,6 +232,14 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             # customer list such as KH:123,456 must keep its two values separate.
             tokens.extend(_Token(part.group(), match.start() + part.start(), match.start() + part.end())
                           for part in re.finditer(r'[a-z\d]+', match.group()))
+        elif (len(labeled_numbers) == 1 and labeled_numbers[0][1] == match.end()
+              and match.start() < labeled_numbers[0][0]
+              and lowered[match.start():labeled_numbers[0][0]].isalpha()):
+            a, b = labeled_numbers[0]
+            tokens.extend([_Token(lowered[match.start():a], match.start(), a), _Token(lowered[a:b], a, b)])
+        elif len(labeled_numbers) == 1 and match.group().endswith('kbnnttsp'):
+            a, b = labeled_numbers[0]
+            tokens.extend([_Token(lowered[a:b], a, b), _Token(lowered[b:match.end()], b, match.end())])
         else:
             tokens.append(match)
     for m in tokens:
@@ -229,7 +278,7 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         prefix = masked[max(0, match.start() - 48):match.start()]
         numeric_type = roles.get(match.span(), 'UNKNOWN_NUMBER')
         original_value = value
-        embedded_id = re.fullmatch(r'(?:makhachhang|makh|mkh|mk|idkh|kh)(\d+)', value)
+        embedded_id = re.fullmatch(r'(?:makhachhang|makh|mskh|mkh|mk|idkh|id|kh)(\d{6})', value)
         if numeric_type == 'UNKNOWN_NUMBER':
             if CONTRACT_CONTEXT.search(prefix):
                 numeric_type = 'CONTRACT_ID'
@@ -240,12 +289,8 @@ def normalize_text(raw: str) -> NormalizedTransaction:
             elif embedded_id:
                 value = embedded_id[1]
                 numeric_type = 'CUSTOMER_ID'
-            elif CUSTOMER_CONTEXT.search(prefix):
+            elif CUSTOMER_CONTEXT.search(prefix) and CUSTOMER_ID.fullmatch(value):
                 numeric_type = 'CUSTOMER_ID'
-                # "Ma KH: 062376KBNNTTSP_..." glues a bank suffix to the ID; keep the digits.
-                glued_suffix = re.fullmatch(r'(\d{4,})[a-z]+', value)
-                if glued_suffix:
-                    value = glued_suffix[1]
             elif INVOICE_CONTEXT.search(prefix):
                 numeric_type = 'INVOICE_ID'
             elif REFERENCE_CONTEXT.search(prefix):
@@ -263,6 +308,12 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         feature = {'type': 'number', 'numeric_type': numeric_type, 'slot': slot,
                    'value': value, 'raw_value': raw[offsets[match.start()]:offsets[match.end()]], 'format': code_format, 'anchor': anchor,
                    'position': len(segments), 'offset': match.start(), 'end': match.end()}
+        if numeric_type == 'CUSTOMER_ID':
+            feature['customer_id_source'] = 'bank_field' if bank_fields and match.span() == customer_span else 'explicit_label'
+        elif numeric_type == 'CONTRACT_ID' and CUSTOMER_ID.fullmatch(value):
+            # HD can mean the customer code in a collection layout. Keep it a
+            # contract until confirmed examples establish this particular position.
+            feature['possible_customer_id'] = True
         if SLOT_VALUE.fullmatch(value) and numeric_type in SLOT_TYPES:
             start = match.start() + (original_value.find(value) if value != original_value else 0)
             feature['context'] = slot_context(lowered, start, start + len(value))
@@ -282,7 +333,7 @@ def normalize_text(raw: str) -> NormalizedTransaction:
         semantic = semantic[:offsets[start]] + replacement + semantic[offsets[end]:]
     return NormalizedTransaction(raw, normalized, template, segments,
         ' '.join('T' if s['type'] == 'text' else s['numeric_type'] + ':' + s['format'] for s in active), numbers,
-        sorted({n['value'] for n in numbers if n['numeric_type'] == 'CUSTOMER_ID'}),
+        list(dict.fromkeys(n['value'] for n in numbers if n['numeric_type'] == 'CUSTOMER_ID')),
         sorted({n['value'] for n in numbers if n['numeric_type'] in PAYER_IDENTIFIERS}),
         {'provider': 'rules', 'status': 'explicit_id' if any(n['numeric_type'] == 'CUSTOMER_ID' for n in numbers) else 'rules', 'entities': []},
         sorted({n['value'] for n in numbers if n['numeric_type'] == 'CONTRACT_ID'}),
@@ -297,9 +348,16 @@ class RuleExtractor:
         return norm
 
 
+@lru_cache(maxsize=4096)
 def identity_signature(raw: str) -> str:
     """Names/locations retain branch numbers. Changing bank/bill references are excluded."""
-    value = fold(raw)
+    period_fields = scan_periods(raw)
+    # Strip periods before editing the narrative, preserving distinct branch numbers.
+    original = fold(raw)
+    chars = list(original)
+    for start, end in period_fields['billing_spans'] + period_fields['date_spans']:
+        chars[start:end] = ' ' * (end - start)
+    value = ''.join(chars)
     value = re.sub(r'-\s*(?:020097\w+|ctlnhidi\S+).*$', '', value)
     value = re.sub(r'^tkthe\s*:[^.,]+(?:,?\s*tai\s+[^.]+)\.', '', value)
     value = re.sub(r'^rem\s+\S+\s+b/o\s+', '', value)

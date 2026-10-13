@@ -62,7 +62,8 @@ def test_semantic_similarity_cannot_override_changed_contract_or_code(db, change
     learn(core, factory, 'TKThe:999000 TT tiền nước KH:001545 HD:AB-001545/02 mã ABC001X2')
     with factory() as session:
         result = core.classify(session, changed)
-        assert result['score'] == 0
+        assert 0 <= result['score'] < core.review_threshold
+        assert result['customer_id'] == '001545'
         assert result['decision'] == 'manual_check'
 
 
@@ -100,7 +101,8 @@ def test_confirmed_bare_customer_number_requires_same_position(db):
         assert core.classify(session, 'Thu tiền nước 001545 ghi chú 777777')['decision'] == 'auto_accept'
         moved = core.classify(session, 'Thu tiền nước 777777 ghi chú 001545')
         assert moved['decision'] == 'manual_check'
-        assert moved['score'] == 0
+        assert moved['score'] < core.review_threshold
+        assert moved['recommendations']
 
 
 def test_card_number_is_not_customer_id_even_if_equal_to_another_customer(db):
@@ -132,7 +134,7 @@ def test_optional_bidv_invoice_copy_does_not_reorder_identity_fields(db):
         assert contract['history_slot'] == contract['slot'] + 1
         assert not contract['absolute_slot_match']
         bad = core.classify(session, query.replace('HD:048946', 'HD:048947'))
-        assert bad['score'] == 0
+        assert bad['customer_id'] == '048946'  # Explicit IDKH has priority over a new HD.
 
 
 def test_contextual_bank_reference_and_quantity_do_not_become_identity():
@@ -160,9 +162,11 @@ def test_mixed_code_needs_unique_confirmed_owner_and_all_stable_values_in_order(
         assert good['decision'] == 'auto_accept'
         assert good['evidence']['unique_mixed_codes'] == ['abc001x2']
         changed = core.classify(session, 'TT tiền nước mã ABC001X2 cơ sở 8')
-        assert changed['score'] == 0
+        assert changed['score'] < core.review_threshold
+        assert changed['recommendations']
     learn(core, factory, 'TT tiền nước mã ABC001X2 cơ sở 9', cid='998812', name='Khách khác', row=2)
     with factory() as session:
         shared = core.classify(session, 'TT tiền nước mã ABC001X2 cơ sở 9')
-        assert shared['score'] == 0
+        assert shared['score'] < core.review_threshold
+        assert {r['customer_id'] for r in shared['recommendations']} == {'001545', '998812'}
         assert shared['decision'] == 'manual_check'

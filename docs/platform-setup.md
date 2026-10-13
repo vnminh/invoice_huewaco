@@ -32,7 +32,7 @@ Windows PowerShell:
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Mở http://127.0.0.1:8000. Chỉ chạy một worker cho một thư mục working. Nếu chạy qua service, đặt working directory về thư mục project để các đường dẫn runtime/cache tương đối vẫn trỏ đúng.
+Mở http://127.0.0.1:8000. Chỉ chạy một worker cho một thư mục working. Mỗi process có 2 luồng xử lý nền: tối đa 2 jobs chạy đồng thời, các jobs sau chờ trong hàng đợi. Không tăng `--workers` để tăng số jobs. Nếu chạy qua service, đặt working directory về thư mục project để các đường dẫn runtime/cache tương đối vẫn trỏ đúng.
 
 ## PostgreSQL và SQL
 
@@ -84,4 +84,15 @@ Linux giữ `resource.getrusage(...).ru_maxrss`; Windows dùng `ctypes` gọi [G
 
 Nếu hệ điều hành không cung cấp thống kê hoặc API không đọc được, báo cáo dùng `null`/`N/A`; lỗi thống kê không làm tác vụ thất bại. Module `resource` chỉ được import ở nhánh hỗ trợ, nên Windows vẫn khởi động bình thường.
 
-Các thay đổi tương thích được rà soát và kiểm tra cú pháp tĩnh; chưa chạy backend/test/benchmark hoặc xác minh runtime trên Windows theo yêu cầu không chạy test của bạn.
+Các thay đổi tương thích được rà soát và kiểm tra cú pháp tĩnh. Đợt cập nhật tương tác đã chạy backend, kiểm tra hồi quy, trình duyệt và benchmark E5 trên Linux với SQLite riêng; xem [báo cáo](interactive-benchmark.md). Chưa xác minh runtime trên Windows thực tế hoặc tích hợp PostgreSQL.
+
+## Quản lý hai jobs song song
+
+- Đối soát và nhập dữ liệu dùng chung pool hai luồng; tiến trình, lỗi, kết quả và nút dừng thuộc từng job. Job thứ ba chờ đến khi có chỗ trống.
+- Dừng job đang chờ: hủy ngay và dọn upload. Dừng job đang chạy: chuyển “Đang dừng”, kết thúc ở điểm kiểm tra tiếp theo; những đợt đã lưu được giữ. Đợt suy luận mô hình đang chạy có thể cần hoàn tất trước khi dừng.
+- Ghi kiến thức được khóa theo từng transaction, gồm metadata nhập, receipt và audit. Đọc tệp, trích xuất và đối soát vẫn chạy song song. Hai lần nhập cùng tệp không nhân đôi kiến thức.
+- Encoder/NER dùng chung một instance có khóa, không tải thêm bản sao mô hình cho job thứ hai. Tốc độ phụ thuộc CPU/GPU, I/O và phần suy luận dùng chung; hai jobs không đồng nghĩa tốc độ gấp đôi.
+- Shutdown thông thường ngừng nhận job, hủy hàng đợi, yêu cầu dừng hai job đang chạy, chờ đóng tệp và dọn upload. Nếu process bị tắt đột ngột, jobs chưa xong chuyển sang gián đoạn khi khởi động lại; kết quả đã lưu còn nguyên.
+- PostgreSQL đối soát theo snapshot từng nhóm dòng; khi học và đối soát đồng thời, các nhóm sau có thể sử dụng kiến thức vừa commit. Không chia sẻ SQLAlchemy session giữa các jobs.
+
+Kiểm tra tại `tests/test_job_concurrency.py`: hai jobs thực sự chồng thời gian, giới hạn hàng đợi, kết quả/ID riêng, dừng độc lập, lỗi không kẹt hàng đợi, shutdown, khởi động lại và nhập trùng đồng thời. Các kiểm tra tự động dùng SQLite riêng; không chạy vào PostgreSQL triển khai.

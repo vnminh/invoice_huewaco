@@ -1,0 +1,133 @@
+{
+  "train": "Data/Ngan hang thang 7-2026 FN.xlsx",
+  "raw": "Data/Ngan hang thang 08.2026.xlsx",
+  "truth": "Data/Ngan hang thang 8-2026 FN.xlsx",
+  "embedding_model": "intfloat/multilingual-e5-small",
+  "training_summary": {
+    "processed": 159169,
+    "confirmed": 158982,
+    "learned": 158952,
+    "unresolved": 37,
+    "batch_settlement_rows": 103304,
+    "skipped": 150,
+    "label_not_in_text_ids": 18,
+    "errors": 107
+  },
+  "training_periods": [
+    "2026-07"
+  ],
+  "original_learning_seconds": 1666.377,
+  "reused_knowledge": true,
+  "train_sheets": null,
+  "test_sheets": [
+    "BIDV"
+  ],
+  "max_test_rows": 500,
+  "test_offset": 1000,
+  "ner_enabled": false,
+  "backend": "isolated SQLite (not PostgreSQL query performance)",
+  "truth_join": "canonical bank + folded narrative; repeated narratives pool confirmed allocations",
+  "unlabeled_policy": "unscored, never treated as negative",
+  "learn_seconds": 0.0,
+  "classify_seconds": 125.785,
+  "match_latency_ms": {
+    "50": 27.41,
+    "95": 750.47,
+    "99": 834.05
+  },
+  "knowledge_mb": 1212.9,
+  "auto_accept": {
+    "precision": 1.0,
+    "recall": 0.08625,
+    "f1": 0.1588,
+    "f0_5": 0.32062,
+    "correct": 37,
+    "wrong": 0,
+    "rows": 429
+  },
+  "auto_accept_seen_customers": {
+    "precision": 1.0,
+    "recall": 0.25694,
+    "f1": 0.40884,
+    "f0_5": 0.63356,
+    "correct": 37,
+    "wrong": 0,
+    "rows": 144
+  },
+  "auto_plus_review": {
+    "precision": 1.0,
+    "recall": 0.08625,
+    "f1": 0.1588,
+    "f0_5": 0.32062,
+    "correct": 37,
+    "wrong": 0,
+    "rows": 429
+  },
+  "suggested_id_for_unseen": {
+    "precision": 0.99519,
+    "recall": 0.72632,
+    "f1": 0.83976,
+    "f0_5": 0.92659,
+    "correct": 207,
+    "wrong": 1,
+    "rows": 285
+  },
+  "recommendations_single_customer": {
+    "coverage": 0.51049,
+    "hit_at_1": 0.2634,
+    "hit_at_5": 0.30303,
+    "rows": 429
+  },
+  "candidate_groups": {
+    "seen_manual_rows": 107,
+    "preview_hits": 94,
+    "scope_hits": 99,
+    "scope_recall": 0.92523,
+    "available_rows": 463,
+    "broad_rows": 37,
+    "size_median": 1035,
+    "size_p95": 1830,
+    "membership_scoring_seconds": 3.47,
+    "seen_manual_size_median": 7,
+    "seen_manual_at_most_10": 81,
+    "seen_manual_over_100": 22
+  },
+  "counts": {
+    "allocation:exact": 6,
+    "allocation:partial": 1,
+    "auto_accept:correct": 37,
+    "auto_accept:correct:single_seen": 37,
+    "batch": 2,
+    "evaluated_rows": 500,
+    "group:available": 463,
+    "group:broad": 37,
+    "group:preview_hit": 94,
+    "group:scope_hit": 99,
+    "group:seen_manual_rows": 107,
+    "multi": 46,
+    "recommendation:covered": 219,
+    "recommendation:hit_at_1": 113,
+    "recommendation:hit_at_5": 130,
+    "single_seen": 144,
+    "single_unseen": 285,
+    "suggestion:correct": 214,
+    "suggestion:correct:batch": 1,
+    "suggestion:correct:multi": 6,
+    "suggestion:correct:single_unseen": 207,
+    "suggestion:wrong": 1,
+    "suggestion:wrong:single_unseen": 1,
+    "unlabeled": 23
+  },
+  "per_sheet": {
+    "BIDV": {
+      "single_seen": 144,
+      "single_unseen": 285,
+      "multi": 46,
+      "auto_accept:correct": 37,
+      "unlabeled": 23,
+      "batch": 2
+    }
+  },
+  "evaluation_role": "regression/validation on the previously analysed holdout slice; not a new independent holdout",
+  "original_decision_id_score_changes": 0
+}
